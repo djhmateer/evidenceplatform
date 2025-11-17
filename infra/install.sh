@@ -70,4 +70,10 @@ poetry self update
 poetry --version
 
 # initialize poetry in the project folder
-poetry init
+# poetry init
+
+# install first time (or if major changes to pyproject.toml)
+poetry install 
+
+# update dependencies
+poetry update
