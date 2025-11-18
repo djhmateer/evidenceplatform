@@ -57,7 +57,7 @@ pyenv versions
 # if on dev, select the appropriate python version ie pyenv 3.14.0
 # ie not pypoetry 3.12.3
 
-### Dependencies 
+### Python Dependencies 
 # there are many in requirements.txt and don't want to affect other projects
 # on my system, so use a virtual environment
 
@@ -73,7 +73,74 @@ poetry --version
 # poetry init
 
 # install first time (or if major changes to pyproject.toml)
+# ****TODO - there are vulnerabilities in some dependencies, need to fix****
+# poetry run safety check
 poetry install 
 
 # update dependencies
 poetry update
+
+
+## React / Nodejs dependencies
+## only need to do this for dev? or to build the frontend for deployment on prod
+
+# install nvm - node version manager
+
+# https://github.com/nvm-sh/nvm
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+
+nvm install --lts --latest-npm
+
+# 24.11.1 on 17th Nov 25
+node -v
+
+# 11.6.2
+npm -v  
+
+cd browsing_platform/client
+
+# todo - favour pnpm
+
+# using React 18.2.0 (why not 19?)
+# creates node_modules
+npm install --legacy-peer-deps
+
+
+
+## MySQL
+## https://documentation.ubuntu.com/server/how-to/databases/install-mysql/
+
+
+# 8.0.43-0ubuntu0.24.04.2 on 18th Nov 25
+sudo apt install mysql-server
+
+# check mysql is running
+sudo service mysql status
+
+sudo systemctl restart mysql.service
+
+# comment out bind-address = localhost  to allow remote connections
+sudo vi /etc/mysql/mysql.conf.d/mysqld.cnf
+
+
+# default install has no root password, so just connect as root user using auth_socket
+sudo mysql -u root
+
+# CREATE USER 'bob'@'localhost' IDENTIFIED WITH caching_sha2_password BY 'password';
+
+# CREATE USER 'alice' IDENTIFIED WITH caching_sha2_password BY 'password';
+
+# so can access from Windows on WSL2
+CREATE USER 'charlie'@'%' IDENTIFIED WITH caching_sha2_password BY 'password';
+
+GRANT ALL PRIVILEGES ON *.* TO 'charlie'@'%' WITH GRANT OPTION;
+FLUSH PRIVILEGES;
+
+# this would give shutdown, replication etc..
+# GRANT SUPER ON *.* TO 'bob'@'localhost';
+
+# GRANT ALL PRIVILEGES ON *.* TO 'bob'@'localhost' WITH GRANT OPTION;
+# FLUSH PRIVILEGES;
+
+# test user from wsl2
+mysql -u charlie -p

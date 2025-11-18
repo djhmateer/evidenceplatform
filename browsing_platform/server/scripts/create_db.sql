@@ -1,7 +1,17 @@
+-- 'utf8mb3' is deprecated and will be removed in a future release. Please use utf8mb4 instead
+
+
+-- DM 18th Nov 25 added 
+-- todo move to utf8mb4_0900_ai_ci once I know this is all working
+CREATE DATABASE evidenceplatform
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+
+
+-- DM - unsigned for id, timestamp types pas 2038.. other thoughts
 create table account
 (
-    id             int auto_increment
-        primary key,
+    id             int auto_increment primary key,
     create_date    timestamp default CURRENT_TIMESTAMP not null,
     update_date    timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
     id_on_platform varchar(100)                        null,
@@ -25,6 +35,7 @@ create index account_id_on_platform_index
 create index account_url_index
     on account (url);
 
+-- DM thoughts here with: InnoDB rebuilding table to add column FTS_DOC_ID
 create fulltext index idx_search_fulltext
     on account (url, url_parts, display_name, bio, notes);
 
