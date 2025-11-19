@@ -1,5 +1,7 @@
 -- TODO
 -- 'utf8mb3' is deprecated and will be removed in a future release. Please use utf8mb4 instead
+-- datetime inconsistencies - utc etc.. need to be careful
+-- add all foreign keys
 
 -- Done
 -- taken out     update_date    timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
@@ -532,4 +534,12 @@ create table user
     constraint email
         unique (email)
 );
+
+-- Add foreign key constraint for token.user_id -> user.id
+--   Enforces referential integrity - Prevents inserting tokens with non-existent user IDs
+--   Automatically cascades deletes - When a user is deleted, all their tokens are automatically removed
+ALTER TABLE token
+    ADD CONSTRAINT fk_token_user
+        FOREIGN KEY (user_id) REFERENCES user(id)
+            ON DELETE CASCADE;
 
