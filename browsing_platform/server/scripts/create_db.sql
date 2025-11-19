@@ -1,7 +1,14 @@
+-- TODO
 -- 'utf8mb3' is deprecated and will be removed in a future release. Please use utf8mb4 instead
+
+-- Done
+-- taken out     update_date    timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+-- to: update_date timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
 
 
 -- DM 18th Nov 25 added 
+
+--DROP DATABASE IF EXISTS evidenceplatform;
 -- todo move to utf8mb4_0900_ai_ci once I know this is all working
 CREATE DATABASE evidenceplatform
   CHARACTER SET utf8mb4
@@ -13,7 +20,7 @@ create table account
 (
     id             int auto_increment primary key,
     create_date    timestamp default CURRENT_TIMESTAMP not null,
-    update_date    timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date    timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     id_on_platform varchar(100)                        null,
     url            varchar(200)                        not null,
     display_name   varchar(100)                        null,
@@ -44,7 +51,7 @@ create table account_archive
     id                 int auto_increment
         primary key,
     create_date        timestamp default CURRENT_TIMESTAMP not null,
-    update_date        timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date        timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     canonical_id       int                                 null,
     archive_session_id int                                 null,
     id_on_platform     varchar(100)                        null,
@@ -71,7 +78,7 @@ create table account_relation
     id                  int auto_increment
         primary key,
     create_date         timestamp default CURRENT_TIMESTAMP not null,
-    update_date         timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date         timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     followed_account_id int                                 not null,
     follower_account_id int                                 not null,
     relation_type       varchar(30)                         null,
@@ -89,7 +96,7 @@ create table account_relation_archive
     id                              int auto_increment
         primary key,
     create_date                     timestamp default CURRENT_TIMESTAMP not null,
-    update_date                     timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date                     timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     canonical_id                    int                                 null,
     archive_session_id              int                                 null,
     id_on_platform                  varchar(100)                        null,
@@ -127,7 +134,7 @@ create table account_tag
     id          int auto_increment
         primary key,
     create_date timestamp default CURRENT_TIMESTAMP not null,
-    update_date timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     account_id  int                                 not null,
     tag_id      int                                 not null,
     notes       text                                null,
@@ -143,7 +150,7 @@ create table archive_session
     id                  int auto_increment
         primary key,
     create_date         timestamp default CURRENT_TIMESTAMP not null,
-    update_date         timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date         timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     external_id         varchar(60)                         null,
     archived_url        varchar(200)                        null,
     archive_location    varchar(200)                        null,
@@ -189,7 +196,7 @@ create table media
     id             int auto_increment
         primary key,
     create_date    timestamp default CURRENT_TIMESTAMP not null,
-    update_date    timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date    timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     id_on_platform varchar(100)                        null,
     url            varchar(250)                        not null,
     post_id        int                                 null,
@@ -218,7 +225,7 @@ create table media_archive
     id                  int auto_increment
         primary key,
     create_date         timestamp default CURRENT_TIMESTAMP not null,
-    update_date         timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date         timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     canonical_id        int                                 null,
     archive_session_id  int                                 null,
     id_on_platform      varchar(100)                        null,
@@ -253,7 +260,7 @@ create table media_part
     id                    int auto_increment
         primary key,
     create_date           timestamp default CURRENT_TIMESTAMP not null,
-    update_date           timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date           timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     media_id              int                                 not null,
     crop_area             varchar(100)                        null,
     notes                 text                                null,
@@ -269,7 +276,7 @@ create table media_part_tag
     id            int auto_increment
         primary key,
     create_date   timestamp default CURRENT_TIMESTAMP not null,
-    update_date   timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date   timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     media_part_id int                                 not null,
     tag_id        int                                 not null,
     notes         text                                null,
@@ -285,7 +292,7 @@ create table media_tag
     id          int auto_increment
         primary key,
     create_date timestamp default CURRENT_TIMESTAMP not null,
-    update_date timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     media_id    int                                 not null,
     tag_id      int                                 not null,
     notes       text                                null,
@@ -301,7 +308,7 @@ create table post
     id               int auto_increment
         primary key,
     create_date      timestamp default CURRENT_TIMESTAMP not null,
-    update_date      timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date      timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     id_on_platform   varchar(100)                        null,
     url              varchar(250)                        not null,
     account_id       int                                 null,
@@ -331,7 +338,7 @@ create table post_archive
     id                     int auto_increment
         primary key,
     create_date            timestamp default CURRENT_TIMESTAMP not null,
-    update_date            timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date            timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     canonical_id           int                                 null,
     archive_session_id     int                                 null,
     id_on_platform         varchar(100)                        null,
@@ -366,7 +373,7 @@ create table post_engagement
     id             int auto_increment
         primary key,
     create_date    timestamp default CURRENT_TIMESTAMP not null,
-    update_date    timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date    timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     id_on_platform varchar(100)                        null,
     url            varchar(250)                        not null,
     post_id        int                                 null,
@@ -391,7 +398,7 @@ create table post_engagement_archive
     id                  int auto_increment
         primary key,
     create_date         timestamp default CURRENT_TIMESTAMP not null,
-    update_date         timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date         timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     canonical_id        int                                 null,
     archive_session_id  int                                 null,
     id_on_platform      varchar(100)                        null,
@@ -426,7 +433,7 @@ create table post_engagement_tag
     id                 int auto_increment
         primary key,
     create_date        timestamp default CURRENT_TIMESTAMP not null,
-    update_date        timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date        timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     post_engagement_id int                                 not null,
     tag_id             int                                 not null,
     notes              text                                null,
@@ -442,7 +449,7 @@ create table post_tag
     id          int auto_increment
         primary key,
     create_date timestamp default CURRENT_TIMESTAMP not null,
-    update_date timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     post_id     int                                 not null,
     tag_id      int                                 not null,
     notes       text                                null,
@@ -458,7 +465,7 @@ create table tag
     id          int auto_increment
         primary key,
     create_date timestamp default CURRENT_TIMESTAMP not null,
-    update_date timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     name        varchar(200)                        not null,
     description text                                null,
     tag_type_id int                                 null,
@@ -471,7 +478,7 @@ create table tag_hierarchy
     id                  int auto_increment
         primary key,
     create_date         timestamp default CURRENT_TIMESTAMP not null,
-    update_date         timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date         timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     super_tag_id        int                                 not null,
     sub_tag_id          int                                 not null,
     temporal_constraint varchar(100)                        null,
@@ -488,7 +495,7 @@ create table tag_type
     id          int auto_increment
         primary key,
     create_date timestamp default CURRENT_TIMESTAMP not null,
-    update_date timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     name        varchar(200)                        not null,
     description text                                null,
     notes       text                                null
@@ -511,7 +518,7 @@ create table user
     id               int auto_increment
         primary key,
     create_date      datetime  default CURRENT_TIMESTAMP not null,
-    update_date      timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP invisible,
+    update_date      timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
     email            varchar(200)                        not null,
     locked           tinyint   default 0                 not null,
     password_hash    varchar(255)                        null,

@@ -57,9 +57,11 @@ pyenv versions
 # if on dev, select the appropriate python version ie pyenv 3.14.0
 # ie not pypoetry 3.12.3
 
+##
 ### Python Dependencies 
 # there are many in requirements.txt and don't want to affect other projects
 # on my system, so use a virtual environment
+# todo - move to uv? keep poetry for now as working. will allow me to get rid of __init__.py files
 
 curl -sSL https://install.python-poetry.org | python3 -
 
@@ -81,6 +83,7 @@ poetry install
 poetry update
 
 
+##
 ## React / Nodejs dependencies
 ## only need to do this for dev? or to build the frontend for deployment on prod
 
@@ -104,6 +107,10 @@ cd browsing_platform/client
 # using React 18.2.0 (why not 19?)
 # creates node_modules
 npm install --legacy-peer-deps
+
+npm update --legacy-peer-deps
+
+npm start
 
 
 
@@ -153,13 +160,12 @@ mysql -u charlie -p
 
 
 
-## Run Server
-
 # create archives directory
 mkdir -p /home/dave/code/evidenceplatform/archives
 mkdir -p /home/dave/code/evidenceplatform/thumbnails
 
-
+#
+## Run Server
 # in browsing_platform/client
 # localhost:3000
 npm start
