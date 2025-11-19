@@ -144,3 +144,25 @@ FLUSH PRIVILEGES;
 
 # test user from wsl2
 mysql -u charlie -p
+
+
+## CREATE DB
+## see browsing_platform/server/scripts/create_db.sql
+
+# then run browing_platform/server/scripts/add_user.py      
+
+
+
+## Run Server
+
+# create archives directory
+mkdir -p /home/dave/code/evidenceplatform/archives
+mkdir -p /home/dave/code/evidenceplatform/thumbnails
+
+
+# in browsing_platform/client
+# localhost:3000
+npm start
+
+# run /browse.py
+# Uvicorn running on http://127.0.0.1:4444 

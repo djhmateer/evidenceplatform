@@ -91,6 +91,11 @@ typing-extensions = "4.13.1"
 urllib3 = "2.5.0"
 warcio = "1.7.5"
 zipp = "3.23.0"
+argon2-cffi = "^25.1.0"
+fastapi = "^0.121.2"
+uvicorn = "^0.38.0"
+tzlocal = "^5.3.1"
+pytz = "^2025.2"
 
 
 [build-system]
