@@ -143,6 +143,21 @@ CREATE USER 'charlie'@'%' IDENTIFIED WITH caching_sha2_password BY 'password';
 GRANT ALL PRIVILEGES ON *.* TO 'charlie'@'%' WITH GRANT OPTION;
 FLUSH PRIVILEGES;
 
+# on my test prod box (130) lets use a different user 
+CREATE USER 'doug'@'%' IDENTIFIED WITH caching_sha2_password BY 'password2';
+
+GRANT ALL PRIVILEGES ON *.* TO 'doug'@'%' WITH GRANT OPTION;
+FLUSH PRIVILEGES;
+
+# prod prod
+# CREATE USER 'ellie'@'%' IDENTIFIED WITH caching_sha2_password BY 'password3';
+
+# GRANT ALL PRIVILEGES ON *.* TO 'ellie'@'%' WITH GRANT OPTION;
+# FLUSH PRIVILEGES;
+
+
+
+
 # this would give shutdown, replication etc..
 # GRANT SUPER ON *.* TO 'bob'@'localhost';
 
