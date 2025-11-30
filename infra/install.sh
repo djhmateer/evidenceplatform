@@ -180,7 +180,7 @@ mkdir -p /home/dave/code/evidenceplatform/archives
 mkdir -p /home/dave/code/evidenceplatform/thumbnails
 
 #
-## Run Server
+## Run client 
 # in browsing_platform/client
 # localhost:3000
 npm start
