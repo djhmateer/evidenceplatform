@@ -250,6 +250,7 @@ def save_fetched_photo(photo: Photo, output_dir: Path) -> AssetSaveResult:
     best_name, best_bytes = max(photo.fetched_assets.items(), key=lambda kv: len(kv[1]))
     out_name = f"photo_{photo.asset_id}_{best_name}"
     out_path = output_dir / out_name
+    print(f"[PHOTO] Saving fetched photo to: {out_path} ({len(best_bytes)} bytes)")
     try:
         with open(out_path, 'wb') as f:
             f.write(best_bytes)
@@ -273,6 +274,7 @@ def download_full_asset(photo: Photo, output_dir: Path) -> AssetSaveResult:
     path_part = urllib_parse.urlparse(photo.full_asset).path
     out_name = f"photo_full_{photo.asset_id}"
     out_path = output_dir / out_name
+    print(f"[PHOTO] Saving full asset to: {out_path} ({len(data)} bytes)")
     try:
         with open(out_path, 'wb') as f:
             f.write(data)
@@ -309,6 +311,7 @@ def acquire_photos(
     structures: Optional[list[StructureType]] = None,
     config: PhotoAcquisitionConfig = PhotoAcquisitionConfig()
 ) -> list[Photo]:
+    print(f"[PHOTO] acquire_photos called: har_path={har_path}, output_dir={output_dir}")
     download_missing = config.download_missing
     download_media_not_in_structures = config.download_media_not_in_structures
     download_unfetched_media = config.download_unfetched_media

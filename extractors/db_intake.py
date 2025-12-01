@@ -24,6 +24,7 @@ class EntityProcessingConfig(BaseModel, Generic[EntityType]):
 
 
 def incorporate_structures_into_db(structures: ExtractedEntitiesFlattened, archive_session_id: int, archive_location: Optional[Path]) -> None:
+    print(f"[DB] incorporate_structures_into_db called: archive_session_id={archive_session_id}, archive_location={archive_location}")
     for entity_config in entity_types:
         entities: list = getattr(structures, entity_config.key, [])
         for entity in entities:
@@ -304,6 +305,8 @@ def store_post_archive(
 
 def preprocess_media(media: Media, _: Optional[int], archive_location: Path) -> Media:
     local_url = (f"{LOCAL_ARCHIVES_DIR_ALIAS}/" + (archive_location / media.local_url).relative_to(ROOT_ARCHIVES).as_posix()) if media.local_url is not None else None
+    if local_url:
+        print(f"[DB] Media local_url set to: {local_url} (from {media.local_url})")
     media.local_url = local_url
     return media
 

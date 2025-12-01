@@ -42,9 +42,11 @@ def search_base(query: ISearchQuery) -> list[SearchResult]:
 def default_fulltext_query(search_term: Optional[str]) -> Optional[str]:
     if not search_term or search_term.strip() == "":
         return None
-    if "+" in search_term or "-" in search_term or "*" in search_term:
+    # If user is using boolean operators, pass through as-is
+    if "+" in search_term or "-" in search_term or "*" in search_term or '"' in search_term:
         return search_term
-    return " ".join([f'+"{word}' for word in search_term.split() if word])
+    # Otherwise, make each word required with wildcard suffix for partial matching
+    return " ".join([f'+{word}*' for word in search_term.split() if word])
 
 
 def search_archive_sessions(query: ISearchQuery) -> list[SearchResult]:

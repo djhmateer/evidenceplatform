@@ -24,7 +24,9 @@ from extractors.thumbnail_generator import generate_missing_thumbnails
 
 
 def register_archives():
+    print(f"[LOADER] Scanning for archives in: {ROOT_ARCHIVES}")
     archive_dirs = [d for d in ROOT_ARCHIVES.iterdir() if d.is_dir()]
+    print(f"[LOADER] Found {len(archive_dirs)} archive directories")
     for archive_dir in archive_dirs:
         archive_name = archive_dir.name
         archiving_session = f"har-{archive_name}"
@@ -61,15 +63,16 @@ def strip_media_contents(data: ExtractedHarData) -> None:
 
 
 def parse_archives():
+    print(f"[LOADER] Starting parse_archives...")
     while True:
         entry = db.execute_query(
             f'''
-            SELECT * 
+            SELECT *
             FROM archive_session
-            WHERE 
-                parsed_content IS NULL AND 
+            WHERE
+                parsed_content IS NULL AND
                 extraction_error IS NULL AND
-                source_type = 1 
+                source_type = 1
             LIMIT 1
             ''',
             {},
@@ -77,12 +80,14 @@ def parse_archives():
         )
         try:
             if entry is None:
-                print("Extracted entities from all entries.")
+                print("[LOADER] Parsed all entries - no more unparsed archives.")
                 return
 
             archive_name = entry['archive_location'].split(f"{LOCAL_ARCHIVES_DIR_ALIAS}/")[1]
+            print(f"[LOADER] Parsing archive: {archive_name} (session_id={entry['id']})")
 
             archive_dir = ROOT_ARCHIVES / archive_name
+            print(f"[LOADER] Archive directory: {archive_dir}")
 
             metadata_path = archive_dir / "metadata.json"
             iso_timestamp = None
@@ -180,23 +185,25 @@ ENTITY_EXTRACTION_ALGORITHM_VERSION = 1
 
 
 def extract_entities():
+    print(f"[LOADER] Starting extract_entities...")
     while True:
         entry = db.execute_query(
             '''SELECT *
-               FROM archive_session 
+               FROM archive_session
                WHERE extracted_entities IS NULL AND source_type = 1 AND extraction_error IS NULL AND parsed_content IS NOT NULL
                LIMIT 1''',
             {},
             return_type="single_row"
         )
         if entry is None:
-            print("Extracted entities from all entries.")
+            print("[LOADER] Extracted entities from all entries - no more to process.")
             return
         entry_id = entry['external_id'] or entry['id']
         try:
-            print("Extracting entities for entry", entry_id)
+            print(f"[LOADER] Extracting entities for entry: {entry_id}")
             archive_name = entry['archive_location'].split(f"{LOCAL_ARCHIVES_DIR_ALIAS}/")[1]
             archive_dir = ROOT_ARCHIVES / archive_name
+            print(f"[LOADER] Archive directory for extraction: {archive_dir}")
             har_path = archive_dir / "archive.har"
             har_data = ExtractedHarData(**json.loads(entry['structures']))
             entities = har_data_to_entities(

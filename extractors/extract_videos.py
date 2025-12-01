@@ -190,6 +190,7 @@ class AssetSaveResult(BaseModel):
     hashed_contents: Optional[str] = None
 
 def save_fetched_asset(video: Video, output_dir: Path, download_full_track: bool) -> AssetSaveResult:
+    print(f"[VIDEO] Saving fetched asset for video {video.xpv_asset_id} to {output_dir}")
     temp_video_file: Optional[Path] = None
     temp_audio_file: Optional[Path] = None
     merged_file: Optional[Path] = None
@@ -224,6 +225,7 @@ def save_fetched_asset(video: Video, output_dir: Path, download_full_track: bool
         source_type = "har_segments" if download_type == "har_segments" else "full_track"
         single_track_file = f"track_{xpv_asset_id}_{track_name}_{source_type}.mp4"
         if track_data is not None and len(track_data) > 0:
+            print(f"[VIDEO] Writing track file: {output_dir / single_track_file} ({len(track_data)} bytes)")
             with open(output_dir / single_track_file, 'wb') as f:
                 f.write(track_data)
 
@@ -266,6 +268,7 @@ def save_fetched_asset(video: Video, output_dir: Path, download_full_track: bool
 
     if temp_audio_file is not None and temp_video_file is not None:
         merged_file_path = output_dir / f"xpv_{video.xpv_asset_id}.mp4"
+        print(f"[VIDEO] Merging audio ({temp_audio_file}) and video ({temp_video_file}) into {merged_file_path}")
         merge_success = merge_video_and_audio_tracks(
             temp_video_file,
             temp_audio_file,
@@ -401,7 +404,7 @@ def get_existing_videos(working_dir: Path) -> dict[str, Path]:
     largest_version_of_files: dict[str, tuple[str, int]] = dict()
 
     for file_name, file_size in existing_files_name_size_tuples:
-        print(f"Extracting {file_name}...")
+        print(f"[VIDEO] Found existing file: {file_name} ({file_size} bytes)")
         asset_id = file_name
         try:
             asset_id = asset_id.split('track_')[1] if 'track_' in asset_id else asset_id
@@ -429,6 +432,7 @@ def download_full_asset(video: Video, output_dir: Path) -> AssetSaveResult:
             hashed_contents = md5(download_result).hexdigest()
             file_name = f"xpv_{video.xpv_asset_id}_full.mp4"
             file_path = output_dir / file_name
+            print(f"[VIDEO] Saving full asset to: {file_path} ({len(download_result)} bytes)")
             with open(file_path, 'wb') as f:
                 f.write(download_result)
             return AssetSaveResult(
@@ -475,6 +479,7 @@ def acquire_videos(
         structures: Optional[list[StructureType]] = None,
         config: VideoAcquisitionConfig = VideoAcquisitionConfig()
 ) -> list[Video]:
+    print(f"[VIDEO] acquire_videos called: har_path={har_path}, output_dir={output_dir}")
     # unpack the config
     download_missing = config.download_missing
     download_media_not_in_structures = config.download_media_not_in_structures
