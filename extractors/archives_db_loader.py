@@ -1,12 +1,15 @@
 import json
 import traceback
 import asyncio
+import logging
 from tzlocal import get_localzone_name
 
 from dateutil import parser
 from pytz import timezone as pytz_timezone
 
 import db
+
+logger = logging.getLogger(__name__)
 from extractors.db_intake import LOCAL_ARCHIVES_DIR_ALIAS, ROOT_ARCHIVES
 from extractors.extract_photos import PhotoAcquisitionConfig
 from extractors.extract_videos import VideoAcquisitionConfig
@@ -73,11 +76,22 @@ def parse_archives():
                 print("Extracted entities from all entries.")
                 return
 
+            logger.info(f"Processing entry: {entry}")
+            logger.info(f"LOCAL_ARCHIVES_DIR_ALIAS: {LOCAL_ARCHIVES_DIR_ALIAS}")
+            logger.info(f"ROOT_ARCHIVES: {ROOT_ARCHIVES}")
+            logger.info(f"entry['archive_location']: {entry['archive_location']}")
+
             archive_name = entry['archive_location'].split(f"{LOCAL_ARCHIVES_DIR_ALIAS}/")[1]
+            logger.info(f"archive_name: {archive_name}")
 
             archive_dir = ROOT_ARCHIVES / archive_name
+            logger.info(f"archive_dir: {archive_dir}")
+            logger.info(f"archive_dir exists: {archive_dir.exists()}")
 
             metadata_path = archive_dir / "metadata.json"
+            logger.info(f"metadata_path: {metadata_path}")
+            logger.info(f"metadata_path exists: {metadata_path.exists()}")
+
             iso_timestamp = None
             archived_url = None
             notes = None
