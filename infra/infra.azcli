@@ -195,6 +195,12 @@ az network nsg rule create \
     --destination-port-range 443 \
     --access allow
 
+# trying here
+echo -e "\nssh -o StrictHostKeyChecking=no dave@${dnsname}.westeurope.cloudapp.azure.com\n" > sshCurrentVm.sh
+
+chmod +x sshCurrentVm.sh
+
+
 # generate dns here.. had trouble doing inside next if statement
 generate_post_data()
 {
@@ -222,9 +228,10 @@ if [ -f "$filename" ]; then
 fi
 
 
-echo -e "\nssh -o StrictHostKeyChecking=no dave@${dnsname}.westeurope.cloudapp.azure.com\n" > sshCurrentVm.sh
 
-chmod +x sshCurrentVm.sh
+# echo -e "\nssh -o StrictHostKeyChecking=no dave@${dnsname}.westeurope.cloudapp.azure.com\n" > sshCurrentVm.sh
+
+# chmod +x sshCurrentVm.sh
 
 # echo -e "password is ${adminpassword}" > password.txt
 # echo -e "http://${dnsname}.westeurope.cloudapp.azure.com"
