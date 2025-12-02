@@ -4,9 +4,25 @@ from fastapi.responses import FileResponse, RedirectResponse
 import uvicorn
 import os
 import logging
+from logging.handlers import RotatingFileHandler
 from fastapi.middleware.cors import CORSMiddleware
 
-logging.basicConfig(level=logging.INFO)
+# Create logs directory if it doesn't exist
+os.makedirs("logs", exist_ok=True)
+
+# Configure logging to file and console
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        RotatingFileHandler(
+            "logs/1debug.log",
+            maxBytes=10_000_000,  # 10MB
+            backupCount=5
+        ),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 from starlette.middleware.base import BaseHTTPMiddleware
 from browsing_platform.server.routes import account, post, media, media_part, archiving_session, login, search, \

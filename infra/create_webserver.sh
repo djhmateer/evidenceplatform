@@ -114,15 +114,15 @@ sudo systemctl enable evidenceplatform
 sudo systemctl start evidenceplatform
 
 # this is handy to test manually 
-# ENVIRONMENT=production \
-# DB_USER=golf \
-# DB_PASS=password5 \
-# DB_NAME=evidenceplatform \
-# DB_PORT=3306 \
-# DB_HOST=localhost \
-# DEFAULT_SIGNATURE=your_prod_signature \
-# BROWSING_PLATFORM_DEV=0 \
-# /home/dave/.local/bin/uv run python browse.py
+ENVIRONMENT=production \
+DB_USER=golf \
+DB_PASS=password5 \
+DB_NAME=evidenceplatform \
+DB_PORT=3306 \
+DB_HOST=localhost \
+DEFAULT_SIGNATURE=your_prod_signature \
+BROWSING_PLATFORM_DEV=0 \
+/home/dave/.local/bin/uv run python browse.py
 
 #   sudo systemctl status evidenceplatform   # Check status
 #   sudo systemctl restart evidenceplatform  # Restart
@@ -137,6 +137,15 @@ sudo cp /home/dave/infra/nginx.conf /etc/nginx/sites-available/default
 sudo systemctl enable nginx
 sudo systemctl restart nginx
 
-# **TODO - create db
-# create prod user - doug
-# create tables
+
+## HELPER scripts
+# export ENVIRONMENT=production
+# export DB_USER=golf
+# export DB_PASS=password5
+# export DB_NAME=evidenceplatform
+# export DB_PORT=3306
+# export DB_HOST=localhost
+# export DEFAULT_SIGNATURE=your_prod_signature
+# export BROWSING_PLATFORM_DEV=0
+
+#  uv run python -m browsing_platform.server.scripts.add_user
