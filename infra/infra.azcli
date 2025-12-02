@@ -146,17 +146,14 @@ done
 # even though this is there already, I need to do the unzip, so lets just copy it
 scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null infra/create_webserver.sh dave@${dnsname}.westeurope.cloudapp.azure.com:/home/dave/ 
 
-pwd
-
-# copy up sample data from archives folder. notice order of arguments -r must be first
-scp -r -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null archives/. dave@${dnsname}.westeurope.cloudapp.azure.com:/home/dave/archives/
-
-exit 0
-
 # Run create_webserver.sh script on the remote machine
 # this is great as you can see the output of the script
 # this will call the unzip of all.zip
 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null dave@${dnsname}.westeurope.cloudapp.azure.com 'sed -i "s/\r$//" create_webserver.sh && chmod +x create_webserver.sh && /home/dave/create_webserver.sh'
+
+# copy up sample data from archives folder. notice order of arguments -r must be first
+scp -r -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null archives/. dave@${dnsname}.westeurope.cloudapp.azure.com:/home/dave/archives/
+
 
 # delete old resource groups
 groupstodel=$(az group list --query "[?contains(name, '${rgprefix}')]".name --output tsv)
