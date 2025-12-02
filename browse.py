@@ -3,6 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
 import uvicorn
 import os
+import time
 import logging
 from logging.handlers import RotatingFileHandler
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,18 +12,26 @@ from fastapi.middleware.cors import CORSMiddleware
 os.makedirs("logs", exist_ok=True)
 
 # Configure logging to file and console
+log_handler = RotatingFileHandler(
+    "logs/1debug.log",
+    maxBytes=10_000_000,  # 10MB
+    backupCount=5
+)
+log_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
-        RotatingFileHandler(
-            "logs/1debug.log",
-            maxBytes=10_000_000,  # 10MB
-            backupCount=5
-        ),
+        log_handler,
         logging.StreamHandler()
     ]
 )
+
+# Also capture uvicorn access logs to file
+logging.getLogger("uvicorn.access").addHandler(log_handler)
+logging.getLogger("uvicorn.error").addHandler(log_handler)
+
 logger = logging.getLogger(__name__)
 from starlette.middleware.base import BaseHTTPMiddleware
 from browsing_platform.server.routes import account, post, media, media_part, archiving_session, login, search, \
@@ -58,15 +67,21 @@ app.mount(
 
 class TokenAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        # logger.info(f"Request: {request.method} {request.url.path}")
+        start_time = time.time()
+
         if not is_dev:
             if request.url.path.startswith("/archives") or request.url.path.startswith("/thumbnails"):
                 token = request.query_params.get("token")
                 if not token or not check_token(token):
                     logger.warning(f"Unauthorized access attempt: {request.url.path}")
                     return Response("Unauthorized", status_code=401)
+
         response = await call_next(request)
-        # logger.info(f"Response: {request.method} {request.url.path} -> {response.status_code}")
+
+        duration_ms = (time.time() - start_time) * 1000
+        client_ip = request.headers.get("X-Real-IP", request.client.host if request.client else "unknown")
+        logger.info(f"{client_ip} - {request.method} {request.url.path} - {response.status_code} - {duration_ms:.1f}ms")
+
         return response
 
 
