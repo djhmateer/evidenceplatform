@@ -130,9 +130,6 @@ cd .. # so now will be in project root
 
 rm -f all.zip # remove old zip file even if it doesn't exist
 
-# zip -r all.zip . > /dev/null # redirect stdout to /dev/null
-# zip -r all.zip . -x "node_modules/*" ".venv/*" "*/__pycache__/*" "dist/*" ".git" ".vscode" ".claude"> /dev/null
-
 zip -r all.zip . -x "*/node_modules/*" "node_modules/*" "*/.venv/*" ".venv/*" "*/__pycache__/*" "*/dist/*" "dist/*" "*/.git/*" ".git/*" "*/.vscode/*" ".vscode/*" \
  "*.claude*" "*.env.development*" "*logs/*" "*archives/*" "*thumbnails/*" > /dev/null
 
@@ -151,6 +148,8 @@ scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null infra/create_web
 
 # copy up sample data from archives folder. notice order of arguments -r must be first
 scp -r -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null archives/. dave@${dnsname}.westeurope.cloudapp.azure.com:/home/dave/archives/
+
+exit 0
 
 # Run create_webserver.sh script on the remote machine
 # this is great as you can see the output of the script
@@ -195,12 +194,6 @@ az network nsg rule create \
     --destination-port-range 443 \
     --access allow
 
-# trying here
-echo -e "\nssh -o StrictHostKeyChecking=no dave@${dnsname}.westeurope.cloudapp.azure.com\n" > sshCurrentVm.sh
-
-chmod +x sshCurrentVm.sh
-
-
 # generate dns here.. had trouble doing inside next if statement
 generate_post_data()
 {
@@ -228,10 +221,11 @@ if [ -f "$filename" ]; then
 fi
 
 
+cd infra 
 
-# echo -e "\nssh -o StrictHostKeyChecking=no dave@${dnsname}.westeurope.cloudapp.azure.com\n" > sshCurrentVm.sh
+echo -e "\nssh -o StrictHostKeyChecking=no dave@${dnsname}.westeurope.cloudapp.azure.com\n" > sshCurrentVm.sh
 
-# chmod +x sshCurrentVm.sh
+chmod +x sshCurrentVm.sh
 
 # echo -e "password is ${adminpassword}" > password.txt
 # echo -e "http://${dnsname}.westeurope.cloudapp.azure.com"
