@@ -1,4 +1,5 @@
 import json
+import os
 
 from fastapi import HTTPException
 from starlette.requests import Request
@@ -8,6 +9,9 @@ from browsing_platform.server.services.token_manager import check_token
 
 
 async def get_auth_user(request: Request):
+    # Bypass auth in dev mode
+    if os.getenv("BROWSING_PLATFORM_DEV"):
+        return True
     """verify that user has a valid session"""
     auth_header = request.headers.get("Authorization")
     if not auth_header:

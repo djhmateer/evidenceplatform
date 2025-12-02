@@ -40,19 +40,19 @@ const entitiesTransformConfigToQueryParams = (config: EntitiesTransformConfig): 
 }
 
 export const fetchAccount = async (accountId: number, config: EntitiesTransformConfig): Promise<IExtractedEntitiesNested> => {
-    return await server.get("account/" + accountId + "/?" + entitiesTransformConfigToQueryParams(config));
+    return await server.get("account/" + accountId + "?" + entitiesTransformConfigToQueryParams(config));
 }
 
 export const fetchPost = async (postId: number, config: EntitiesTransformConfig): Promise<IExtractedEntitiesNested> => {
-    return await server.get("post/" + postId + "/?" + entitiesTransformConfigToQueryParams(config));
+    return await server.get("post/" + postId + "?" + entitiesTransformConfigToQueryParams(config));
 }
 
 export const fetchMedia = async (mediaId: number, config: EntitiesTransformConfig): Promise<IExtractedEntitiesNested> => {
-    return await server.get("media/" + mediaId + "/?" + entitiesTransformConfigToQueryParams(config));
+    return await server.get("media/" + mediaId + "?" + entitiesTransformConfigToQueryParams(config));
 }
 
 export const fetchArchivingSession = async (archivingSessionId: number, config: EntitiesTransformConfig): Promise<IArchiveSessionWithEntities> => {
-    return await server.get("archiving_session/" + archivingSessionId + "/?" + entitiesTransformConfigToQueryParams(config));
+    return await server.get("archiving_session/" + archivingSessionId + "?" + entitiesTransformConfigToQueryParams(config));
 }
 
 export const fetchAccountData = async (accountId: number): Promise<any> => {
