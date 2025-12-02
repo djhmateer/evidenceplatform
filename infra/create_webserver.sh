@@ -46,6 +46,10 @@ pnpm update
 
 # creates static files in /home/dave/browsing_platform/client/dist
 # using the older webpack (slower) build - vite would be faster.
+
+# need this so that the correct endpoint is baked into the build
+# note this is a single line command. use export REACT_APP_SERVER_ENDPOINT=https://evidenceplatform.org/ if want mulitple
+REACT_APP_SERVER_ENDPOINT=https://evidenceplatform.org/ \
 pnpm build
 
 
@@ -63,7 +67,7 @@ uv sync
 
 sudo apt-get install mysql-server -y
 
-exit 0
+# exit 0
 
 # create database and user and tables and sample data
 # run the file create_db.sql    
@@ -105,9 +109,9 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-# sudo systemctl daemon-reload
-# sudo systemctl enable evidenceplatform
-# sudo systemctl start evidenceplatform
+sudo systemctl daemon-reload
+sudo systemctl enable evidenceplatform
+sudo systemctl start evidenceplatform
 
 # this is handy to test manually 
 # ENVIRONMENT=production \
@@ -118,11 +122,7 @@ EOF
 # DB_HOST=localhost \
 # DEFAULT_SIGNATURE=your_prod_signature \
 # BROWSING_PLATFORM_DEV=0 \
-# REACT_APP_SERVER_ENDPOINT=https://evidenceplatform.org/ \
 # /home/dave/.local/bin/uv run python browse.py
-
-
-
 
 #   sudo systemctl status evidenceplatform   # Check status
 #   sudo systemctl restart evidenceplatform  # Restart
