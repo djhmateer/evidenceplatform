@@ -126,7 +126,7 @@ az network nsg rule create \
 # copy source code to new VM
 # problem is it is coping __pycache__ , .venv , node_modules etc
 
-cd .. # so now will be in project root
+cd .. # so now will be in project root ie /home/dave/code/evidenceplatform
 
 rm -f all.zip # remove old zip file even if it doesn't exist
 
@@ -145,6 +145,8 @@ done
 
 # even though this is there already, I need to do the unzip, so lets just copy it
 scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null infra/create_webserver.sh dave@${dnsname}.westeurope.cloudapp.azure.com:/home/dave/ 
+
+pwd
 
 # copy up sample data from archives folder. notice order of arguments -r must be first
 scp -r -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null archives/. dave@${dnsname}.westeurope.cloudapp.azure.com:/home/dave/archives/
