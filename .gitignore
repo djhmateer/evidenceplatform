@@ -20,3 +20,6 @@ browsing_platform/server/routes/__pycache__/*
 browsing_platform/server/services/__pycache__/*
 /thumbnails
 browsing_platform/client/.env
+
+secrets
+sshCurrentVm.sh

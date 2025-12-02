@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 import uvicorn
 import os
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,6 +59,24 @@ for r in [
     tags.router
 ]:
     app.include_router(r, prefix="/api")
+
+# Serve React build static assets - this is the css and js files
+# app.mount("/static", StaticFiles(directory="browsing_platform/client/build/static"), name="static")
+
+# # # SPA catch-all route (must be last)
+# @app.api_route("/{full_path:path}", methods=["GET"])
+# async def serve_spa(request: Request, full_path: str):
+#     # Let API routes return proper 404s
+#     # if full_path.startswith("api/"):
+#     #     return Response('{"detail":"Not Found"}', status_code=404, media_type="application/json")
+#     # # Don't intercept archives or thumbnails
+#     # if full_path.startswith("archives/") or full_path.startswith("thumbnails/"):
+#     #     return Response(status_code=404)
+#     build_dir = "browsing_platform/client/build"
+#     file_path = os.path.join(build_dir, full_path)
+#     if full_path and os.path.isfile(file_path):
+#         return FileResponse(file_path)
+#     return FileResponse(os.path.join(build_dir, "index.html"))
 
 if __name__ == "__main__":
     uvicorn.run("browse:app", host="127.0.0.1", port=4444, reload=True)

@@ -88,6 +88,9 @@ dependencies = [
     "warcio==1.7.5",
     "zipp==3.23.0",
     "zstandard==0.23.0",
+    "fastapi>=0.123.0",
+    "uvicorn>=0.38.0",
+    "argon2-cffi>=25.1.0",
 ]
 
 [tool.hatch.build.targets.wheel]
