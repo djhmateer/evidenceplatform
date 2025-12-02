@@ -15,7 +15,6 @@ sudo apt-get install unzip -y
 # q for quiet
 unzip -oq all.zip
 
-exit 0
 
 
 ## FRONTEND Client 
@@ -64,9 +63,13 @@ uv sync
 
 sudo apt-get install mysql-server -y
 
+exit 0
+
 # create database and user and tables and sample data
 # run the file create_db.sql    
 sudo mysql < /home/dave/infra/create_db.sql
+
+sudo mysql < /home/dave/secrets/insert_data.sql
 
 
 ## Build server
@@ -84,6 +87,15 @@ Type=simple
 User=dave
 WorkingDirectory=/home/dave
 Environment=ENVIRONMENT=production
+Environment=ENVIRONMENT=production
+Environment=DB_USER=golf
+Environment=DB_PASS=password5
+Environment=DB_NAME=evidenceplatform
+Environment=DB_PORT=3306
+Environment=DB_HOST=localhost
+Environment=DEFAULT_SIGNATURE=your_prod_signature
+Environment=BROWSING_PLATFORM_DEV=0
+
 ExecStart=/home/dave/.local/bin/uv run python browse.py
 Restart=always
 RestartSec=5
