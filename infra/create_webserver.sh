@@ -72,9 +72,11 @@ sudo mysql < /home/dave/infra/create_db.sql
 sudo mysql < /home/dave/secrets/insert_data.sql
 
 
-## Build server
+## Run FastAPI server under uv as a systemd service 
 
-cd /home/dave/server
+cd /home/dave
+mkdir archives
+mkdir thumbnails
 
 # Set up systemd service for the API
 sudo tee /etc/systemd/system/evidenceplatform.service > /dev/null <<EOF
@@ -86,7 +88,6 @@ After=network.target mysql.service
 Type=simple
 User=dave
 WorkingDirectory=/home/dave
-Environment=ENVIRONMENT=production
 Environment=ENVIRONMENT=production
 Environment=DB_USER=golf
 Environment=DB_PASS=password5
@@ -104,9 +105,24 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-sudo systemctl daemon-reload
-sudo systemctl enable evidenceplatform
-sudo systemctl start evidenceplatform
+# sudo systemctl daemon-reload
+# sudo systemctl enable evidenceplatform
+# sudo systemctl start evidenceplatform
+
+# this is handy to test manually 
+# ENVIRONMENT=production \
+# DB_USER=golf \
+# DB_PASS=password5 \
+# DB_NAME=evidenceplatform \
+# DB_PORT=3306 \
+# DB_HOST=localhost \
+# DEFAULT_SIGNATURE=your_prod_signature \
+# BROWSING_PLATFORM_DEV=0 \
+# REACT_APP_SERVER_ENDPOINT=https://evidenceplatform.org/ \
+# /home/dave/.local/bin/uv run python browse.py
+
+
+
 
 #   sudo systemctl status evidenceplatform   # Check status
 #   sudo systemctl restart evidenceplatform  # Restart
