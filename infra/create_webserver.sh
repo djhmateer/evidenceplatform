@@ -114,15 +114,15 @@ sudo systemctl enable evidenceplatform
 sudo systemctl start evidenceplatform
 
 # this is handy to test manually 
-ENVIRONMENT=production \
-DB_USER=golf \
-DB_PASS=password5 \
-DB_NAME=evidenceplatform \
-DB_PORT=3306 \
-DB_HOST=localhost \
-DEFAULT_SIGNATURE=your_prod_signature \
-BROWSING_PLATFORM_DEV=0 \
-/home/dave/.local/bin/uv run python browse.py
+# ENVIRONMENT=production \
+# DB_USER=golf \
+# DB_PASS=password5 \
+# DB_NAME=evidenceplatform \
+# DB_PORT=3306 \
+# DB_HOST=localhost \
+# DEFAULT_SIGNATURE=your_prod_signature \
+# BROWSING_PLATFORM_DEV=0 \
+# /home/dave/.local/bin/uv run python browse.py
 
 #   sudo systemctl status evidenceplatform   # Check status
 #   sudo systemctl restart evidenceplatform  # Restart
