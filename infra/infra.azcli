@@ -2,6 +2,8 @@
 
 # File to build evidenceplatform.org webserver
 
+
+
 # Track start time
 start_time=$(date +%s)
 
@@ -40,6 +42,43 @@ subnet=subnet${int}
 publicIPName=publicIP${int}
 nsgname=nsg${int}
 nicName=nic${int}
+
+
+
+
+
+# generate dns here.. had trouble doing inside next if statement
+generate_post_data()
+{
+  cat <<EOF
+{
+  "content": "${dnsname}.westeurope.cloudapp.azure.com",
+  "ttl": 60
+}
+EOF
+}
+
+# patch DNS through to the new VM only if the token file exist
+filename=../secrets/dnsimpletoken.txt
+if [ -f "$filename" ]; then
+    echo "dnsimpletoken.txt file found"
+
+    # get the first and only line
+    token=$(head -n 1 $filename)
+    # echo "token is $token"
+
+    # update DNS
+    curl https://api.dnsimple.com/v2/63829/zones/evidenceplatform.org/records/70831671 -H "Authorization: Bearer ${token}" -H "Accept: application/json" -H "Content-Type: application/json" -X PATCH -d "$(generate_post_data)" 
+
+    curl https://api.dnsimple.com/v2/63829/zones/evidenceplatform.org/records/70831674 -H "Authorization: Bearer ${token}" -H "Accept: application/json" -H "Content-Type: application/json" -X PATCH -d "$(generate_post_data)" 
+fi
+
+
+echo -e "\nssh -o StrictHostKeyChecking=no dave@${dnsname}.westeurope.cloudapp.azure.com\n" > sshCurrentVm.sh
+
+chmod +x sshCurrentVm.sh
+
+exit 0
 
 # resource group
 az group create \
