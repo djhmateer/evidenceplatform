@@ -15,6 +15,7 @@ sudo apt-get install unzip -y
 # q for quiet
 unzip -oq all.zip
 
+exit 0
 
 
 ## FRONTEND Client 
