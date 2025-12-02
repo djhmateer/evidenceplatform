@@ -148,4 +148,8 @@ sudo systemctl restart nginx
 # export DEFAULT_SIGNATURE=your_prod_signature
 # export BROWSING_PLATFORM_DEV=0
 
+# add new user (have got my demo one already in the insert_data.sql)
 #  uv run python -m browsing_platform.server.scripts.add_user
+
+# insert data from archives
+
