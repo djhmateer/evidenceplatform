@@ -29,8 +29,8 @@ logging.basicConfig(
 )
 
 # Also capture uvicorn access logs to file
-logging.getLogger("uvicorn.access").addHandler(log_handler)
-logging.getLogger("uvicorn.error").addHandler(log_handler)
+# logging.getLogger("uvicorn.access").addHandler(log_handler)
+# logging.getLogger("uvicorn.error").addHandler(log_handler)
 
 logger = logging.getLogger(__name__)
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -40,7 +40,7 @@ from browsing_platform.server.services.token_manager import check_token
 from dotenv import load_dotenv
 
 load_dotenv()
-is_dev = os.getenv("BROWSING_PLATFORM_DEV", "")
+is_production = os.getenv("ENVIRONMENT") == "production"
 app = FastAPI()
 
 app.add_middleware(
@@ -69,7 +69,7 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         start_time = time.time()
 
-        if not is_dev:
+        if is_production:
             if request.url.path.startswith("/archives") or request.url.path.startswith("/thumbnails"):
                 token = request.query_params.get("token")
                 if not token or not check_token(token):
@@ -78,9 +78,10 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
 
-        duration_ms = (time.time() - start_time) * 1000
-        client_ip = request.headers.get("X-Real-IP", request.client.host if request.client else "unknown")
-        logger.info(f"{client_ip} - {request.method} {request.url.path} - {response.status_code} - {duration_ms:.1f}ms")
+        if is_production:
+            duration_ms = (time.time() - start_time) * 1000
+            client_ip = request.headers.get("X-Real-IP", request.client.host if request.client else "unknown")
+            logger.info(f"{client_ip} - {request.method} {request.url.path} - {response.status_code} - {duration_ms:.1f}ms")
 
         return response
 

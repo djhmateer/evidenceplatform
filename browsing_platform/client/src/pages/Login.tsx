@@ -133,14 +133,16 @@ class Login extends React.Component<IProps, IState> {
                             this.state.awaitingAuthentication
                                 ? <CircularProgress size={20}/>
                                 : <Tooltip title={`Login`} placement="top" arrow disableInteractive>
-                                    <IconButton
-                                        color="success"
-                                        size="small"
-                                        disabled={!this.state.password.length}
-                                        onClick={this.verifyPasswordLogin}
-                                    >
-                                        <LocalFlorist/>
-                                    </IconButton>
+                                    <span>
+                                        <IconButton
+                                            color="success"
+                                            size="small"
+                                            disabled={!this.state.password.length}
+                                            onClick={this.verifyPasswordLogin}
+                                        >
+                                            <LocalFlorist/>
+                                        </IconButton>
+                                    </span>
                                 </Tooltip>
                         }
                     </Stack>
