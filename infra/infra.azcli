@@ -145,10 +145,11 @@ do
 done
 
 cd infra
-# ***HERE***** - do I need this (it should be there already)
-# scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null create_webserver.sh dave@${dnsname}.westeurope.cloudapp.azure.com:/home/dave/ 
+# even though this is there already, I need to do the unzip, so lets just copy it
+scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null create_webserver.sh dave@${dnsname}.westeurope.cloudapp.azure.com:/home/dave/ 
 
-# **HERE NEXT*** copy up sample data from archives folder.
+# copy up sample data from archives folder.
+scp -o -r StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null archives/ dave@${dnsname}.westeurope.cloudapp.azure.com:/home/dave/archives/
 
 # Run create_webserver.sh script on the remote machine
 # this is great as you can see the output of the script
