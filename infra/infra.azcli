@@ -91,7 +91,7 @@ az vm create \
     --nics ${nicName} \
     --image ${image} \
     --ssh-key-values @~/.ssh/id_rsa_azure.pub \
-    --size Standard_B2ms
+    --size Standard_B2s
 else
  echo "ping"
 # az vm create \

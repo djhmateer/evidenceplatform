@@ -7,11 +7,15 @@ import time
 import logging
 from logging.handlers import RotatingFileHandler
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+
+load_dotenv()
+is_production = os.getenv("ENVIRONMENT") == "production"
 
 # Create logs directory if it doesn't exist
 os.makedirs("logs", exist_ok=True)
 
-# Configure logging to file and console
+# Configure logging to file (and console only in dev)
 log_handler = RotatingFileHandler(
     "logs/1debug.log",
     maxBytes=10_000_000,  # 10MB
@@ -19,28 +23,21 @@ log_handler = RotatingFileHandler(
 )
 log_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
 
+handlers = [log_handler]
+if not is_production:
+    handlers.append(logging.StreamHandler())
+
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        log_handler,
-        logging.StreamHandler()
-    ]
+    handlers=handlers
 )
-
-# Also capture uvicorn access logs to file
-# logging.getLogger("uvicorn.access").addHandler(log_handler)
-# logging.getLogger("uvicorn.error").addHandler(log_handler)
 
 logger = logging.getLogger(__name__)
 from starlette.middleware.base import BaseHTTPMiddleware
 from browsing_platform.server.routes import account, post, media, media_part, archiving_session, login, search, \
     permissions, tags, annotate
 from browsing_platform.server.services.token_manager import check_token
-from dotenv import load_dotenv
-
-load_dotenv()
-is_production = os.getenv("ENVIRONMENT") == "production"
 app = FastAPI()
 
 app.add_middleware(
