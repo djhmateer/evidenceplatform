@@ -119,4 +119,5 @@ async def serve_spa(request: Request, full_path: str):
     return FileResponse(os.path.join(build_dir, "index.html"))
 
 if __name__ == "__main__":
-    uvicorn.run("browse:app", host="127.0.0.1", port=4444, reload=True)
+    reload = not is_production
+    uvicorn.run("browse:app", host="127.0.0.1", port=4444, reload=reload)
