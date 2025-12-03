@@ -1,11 +1,12 @@
-import os
 import asyncio
+import os
 from pathlib import Path
+
 from har2warc.har2warc import har2warc
 
 
 async def generate_warc(archive_name):
-    archives_dir = Path("./archives")
+    archives_dir = Path("../archives")
     archive_path = archives_dir / archive_name
 
     if not archive_path.exists() or not (archive_path / "archive.har").exists():

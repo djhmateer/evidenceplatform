@@ -1,12 +1,12 @@
-from typing import Any, Optional, Dict
+from typing import Optional, Dict
 
 from pydantic import BaseModel
 
 from extractors.models import StoriesFeed, CommentsConnection
+from extractors.models_api_v1 import LikersApiV1
 from extractors.models_graphql import ProfileTimelineGraphQL, FriendsListGraphQL, ReelsMediaConnection, \
     ClipsUserConnection
 from extractors.models_har import HarRequest
-from extractors.models_api_v1 import LikersApiV1
 
 
 class GraphQLResponse(BaseModel):

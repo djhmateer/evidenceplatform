@@ -4,29 +4,42 @@ import {
     Box,
     Button,
     Card,
+    CardMedia,
     CircularProgress,
+    Collapse,
     Divider,
+    Fab,
     FormControl,
     IconButton,
     MenuItem,
     OutlinedInput,
-    Stack,
-    Typography,
     Select,
-    Fab,
+    Stack,
     Tooltip,
-    Collapse, CardMedia
+    Typography
 } from "@mui/material";
 import SearchIcon from '@mui/icons-material/Search';
 import QuestionMarkIcon from '@mui/icons-material/QuestionMark';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import {
-    ISearchQuery, SEARCH_MODES, searchData, T_Search_Mode, ADVANCED_FILTERS_CONFIG, SearchResult
+    ADVANCED_FILTERS_CONFIG,
+    ISearchQuery,
+    SEARCH_MODES,
+    searchData,
+    SearchResult,
+    T_Search_Mode
 } from "../services/DataFetcher";
 import TopNavBar from "../UIComponents/TopNavBar/TopNavBar";
-import {ImmutableTree, BuilderProps, Utils, JsonLogicFunction} from '@react-awesome-query-builder/mui'; // for TS example
-import {Query, Builder, Utils as QbUtils} from '@react-awesome-query-builder/mui';
-import {MuiConfig} from '@react-awesome-query-builder/mui';
+import {
+    Builder,
+    BuilderProps,
+    ImmutableTree,
+    JsonLogicFunction,
+    MuiConfig,
+    Query,
+    Utils as QbUtils,
+    Utils
+} from '@react-awesome-query-builder/mui'; // for TS example
 import '@react-awesome-query-builder/mui/css/styles.css';
 import rison from "rison";
 import {removeUndefinedValues} from "../services/utils";

@@ -1,8 +1,8 @@
 from typing import Optional
 
-import db
 from browsing_platform.server.services.annotation import Annotation
 from extractors.entity_types import Account
+from utils import db
 
 
 def get_account_by_id(account_id: int) -> Optional[Account]:

@@ -1,9 +1,9 @@
 from datetime import datetime
-
-from pydantic import BaseModel
 from typing import Optional
 
-import db
+from pydantic import BaseModel
+
+from utils import db
 
 
 class ITag(BaseModel):
@@ -36,3 +36,34 @@ def auto_complete_tags(query: str) -> list[ITagWithType]:
         return_type="rows"
     )
     return [ITagWithType(**row) for row in matching_rows]
+
+
+def get_tags_by_entity_ids(entity:str , ids: list[int]) -> dict[int, list[ITagWithType]]:
+    if not ids or len(ids) == 0:
+        return {}
+    if entity not in ['account', 'post', 'media', 'media_part', 'archive_session']:
+        raise Exception("unsupported entity for tag retrieval")
+    query_args = {f"id_{i}": f"{id_}" for i, id_ in enumerate(ids)}
+    query_in_clause = ', '.join([f"%(id_{i})s" for i in range(len(ids))])
+    tag_rows = db.execute_query(
+        f"""SELECT 
+                t.*,
+                te.{entity}_id AS entity_id,
+                tag_type.name AS tag_type_name,
+                tag_type.description AS tag_type_description,
+                tag_type.notes AS tag_type_notes
+            FROM {entity}_tag AS te
+            LEFT JOIN tag AS t ON te.tag_id = t.id
+            LEFT JOIN tag_type ON t.tag_type_id = tag_type.id
+            WHERE te.{entity}_id IN ({query_in_clause})""",
+        query_args,
+        return_type="rows"
+    )
+    tags_by_entity_id: dict[int, list[ITagWithType]] = {}
+    for row in tag_rows:
+        entity_id = row.pop("entity_id")
+        tag = ITagWithType(**row)
+        if entity_id not in tags_by_entity_id:
+            tags_by_entity_id[entity_id] = []
+        tags_by_entity_id[entity_id].append(tag)
+    return tags_by_entity_id

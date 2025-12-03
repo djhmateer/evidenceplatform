@@ -2,7 +2,6 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-
 supported_page_types = Literal["highlight", "story", "reel", "post", "profile"]
 import json
 from bs4 import BeautifulSoup

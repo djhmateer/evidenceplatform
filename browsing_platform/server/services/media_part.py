@@ -1,10 +1,12 @@
-from typing import Optional
-from pydantic import field_validator
-import db
 import json
+from typing import Optional
+
+from pydantic import field_validator
 
 from browsing_platform.server.services.annotation import Annotation
 from extractors.entity_types import Media, EntityBase
+from utils import db
+
 
 class MediaPart(EntityBase):
     media_id: int

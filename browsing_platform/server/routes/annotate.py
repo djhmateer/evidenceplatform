@@ -1,6 +1,5 @@
 from http.client import HTTPException
-from typing import Any, Literal, TypeAlias, Optional, List
-from pydantic import BaseModel
+from typing import Any, Literal, TypeAlias
 
 from fastapi import APIRouter, Depends, Request
 

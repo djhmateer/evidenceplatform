@@ -1,8 +1,6 @@
 import React from 'react';
 import {IArchiveSession} from "../../types/entities";
-import {
-    Box, Card, CardContent, CardHeader, Divider, Stack, Typography, Skeleton
-} from "@mui/material";
+import {Box, Card, CardContent, CardHeader, Divider, Skeleton, Stack, Typography} from "@mui/material";
 import {DataGrid} from "@mui/x-data-grid";
 import {Download, LocalMovies} from "@mui/icons-material";
 import {fetchArchivingSessionData} from "../../services/DataFetcher";

@@ -1,17 +1,16 @@
 import base64
 import datetime
 import json
-from hashlib import md5
-from pathlib import Path
-from typing import Optional, Literal
-
-import ijson
 import os
 import subprocess
 import traceback
+from hashlib import md5
+from pathlib import Path
+from typing import Optional, Literal
 from urllib import parse as urllib_parse
-import requests
 
+import ijson
+import requests
 from pydantic import BaseModel
 
 from extractors.models import VideoVersion
@@ -19,7 +18,7 @@ from extractors.structures_extraction import StructureType, structures_from_har
 from extractors.structures_extraction_api_v1 import ApiV1Response
 from extractors.structures_extraction_graphql import GraphQLResponse
 from extractors.structures_extraction_html import PageResponse
-from timestamper import timestamp_file
+from utils.timestamper import timestamp_file
 
 
 class MediaSegment(BaseModel):

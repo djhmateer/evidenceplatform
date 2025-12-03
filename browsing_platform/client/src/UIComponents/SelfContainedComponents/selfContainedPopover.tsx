@@ -1,6 +1,5 @@
 import React, {Component, ReactElement} from 'react';
-import {Popover, PopoverProps, Stack} from '@mui/material';
-import {SxProps, Theme} from "@mui/system";
+import {Popover, PopoverProps} from '@mui/material';
 
 interface IProps {
     trigger: (popupVisibilitySetter: (e: React.MouseEvent<HTMLElement>, visibility: boolean) => any) => ReactElement;

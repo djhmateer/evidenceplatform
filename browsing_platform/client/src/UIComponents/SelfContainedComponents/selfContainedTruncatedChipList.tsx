@@ -1,6 +1,5 @@
-import React, {Component, CSSProperties, ReactElement} from 'react';
-import {Chip, ChipTypeMap, IconButton, Modal, Stack, StackTypeMap, Tooltip} from '@mui/material';
-import {Close as CloseIcon} from '@mui/icons-material';
+import React, {Component} from 'react';
+import {Chip, ChipTypeMap, Stack, StackTypeMap, Tooltip} from '@mui/material';
 import './selfContainedModal.scss';
 import {DefaultComponentProps} from "@mui/material/OverridableComponent";
 

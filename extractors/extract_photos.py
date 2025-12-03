@@ -1,24 +1,24 @@
 # python
 # File: extractors/extract_photos.py
 import base64
+import datetime
 import json
 import os
-import datetime
 from hashlib import md5
 from pathlib import Path
 from typing import Optional
+from urllib import parse as urllib_parse
 
 import ijson
-from urllib import parse as urllib_parse
 import requests
 from pydantic import BaseModel
 
 from extractors.structures_extraction import StructureType
+from extractors.structures_extraction import structures_from_har
 from extractors.structures_extraction_api_v1 import ApiV1Response
 from extractors.structures_extraction_graphql import GraphQLResponse
 from extractors.structures_extraction_html import PageResponse
-from extractors.structures_extraction import structures_from_har
-from timestamper import timestamp_file
+from utils.timestamper import timestamp_file
 
 # Supported image extensions
 IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'heic', 'heif'}

@@ -1,7 +1,8 @@
-import subprocess
-from typing import Optional
 import os
+import subprocess
 import sys
+from typing import Optional
+
 
 # Determine if we're running in a PyInstaller bundle
 def is_bundled():
@@ -67,6 +68,27 @@ def get_current_commit_id() -> Optional[str]:
         print("Git is not installed or not available in the PATH.")
         return None
 
+def get_github_permalink() -> Optional[str]:
+    commit_id = get_current_commit_id()
+    if commit_id is None:
+        commit_id = "main"
+    try:
+        result = subprocess.run(
+            ["git", "config", "--get", "remote.origin.url"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        remote_url = result.stdout.strip()
+        if remote_url.endswith('.git'):
+            remote_url = remote_url[:-4]
+        remote_url += f"/tree/{commit_id}"
+        print(remote_url)
+        return remote_url
+    except:
+        print("Error: Unable to retrieve the remote origin URL.")
+        return None
+
 def ensure_committed() -> str:
     if (not is_bundled()) and has_uncommitted_changes():
         proceed_despite_uncommited_changes = (input("You have may have uncommitted changes. Are you sure you want to proceed? (yes/no): ")
@@ -78,3 +100,7 @@ def ensure_committed() -> str:
     commit_id = get_current_commit_id()
     print(f"Commit ID: {commit_id}")
     return commit_id
+
+
+if __name__ == "__main__":
+    get_github_permalink()

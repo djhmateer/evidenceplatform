@@ -3,10 +3,16 @@ import server from '../../services/server';
 import cookie from 'js-cookie';
 import withRouter, {IRouterProps} from "../../services/withRouter";
 import {
-    AppBar, Toolbar, Drawer,
-    List, ListItemButton,
-    Stack, Divider,
-    IconButton, ListItemIcon, ListItemText
+    AppBar,
+    Divider,
+    Drawer,
+    IconButton,
+    List,
+    ListItemButton,
+    ListItemIcon,
+    ListItemText,
+    Stack,
+    Toolbar
 } from "@mui/material";
 import LocalFloristIcon from '@mui/icons-material/LocalFlorist';
 import MenuIcon from '@mui/icons-material/Menu';

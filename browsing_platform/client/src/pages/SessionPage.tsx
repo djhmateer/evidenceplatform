@@ -1,18 +1,10 @@
 import React from 'react';
 import withRouter, {IRouterProps} from "../services/withRouter";
-import {
-    Box,
-    CircularProgress, Divider, Stack,
-} from "@mui/material";
+import {Box, CircularProgress, Divider, Stack,} from "@mui/material";
 import {IArchiveSession, IExtractedEntitiesNested} from "../types/entities";
-import {
-    fetchArchivingSession,
-    fetchArchivingSessionsPost,
-    fetchPost
-} from "../services/DataFetcher";
+import {fetchArchivingSession} from "../services/DataFetcher";
 import EntitiesViewer from "../UIComponents/Entities/EntitiesViewer";
 import TopNavBar from "../UIComponents/TopNavBar/TopNavBar";
-import ArchivingSession from "src/UIComponents/Entities/ArchivingSession";
 import ArchivingSessionsList from "../UIComponents/Entities/ArchivingSessionsList";
 import {EntityViewerConfig} from "../UIComponents/Entities/EntitiesViewerConfig";
 

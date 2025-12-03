@@ -2,6 +2,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+
 class SessionAttachments(BaseModel):
     screen_recordings: list[str] = Field(default_factory=list)
     screen_shots: list[str] = Field(default_factory=list)

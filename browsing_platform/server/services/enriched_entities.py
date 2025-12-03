@@ -1,15 +1,17 @@
 from typing import Optional
+
 from pydantic import BaseModel
 
-import db
 from browsing_platform.server.services.account import get_account_by_id
 from browsing_platform.server.services.archiving_session import ArchiveSessionWithEntities, get_archiving_session_by_id, \
     ArchiveSession
 from browsing_platform.server.services.entities_hierarchy import nest_entities
 from browsing_platform.server.services.media import get_media_by_posts, get_media_by_id
 from browsing_platform.server.services.post import get_post_by_id, get_posts_by_accounts
-from extractors.db_intake import LOCAL_ARCHIVES_DIR_ALIAS
+from browsing_platform.server.services.tag import get_tags_by_entity_ids
+from db_loaders.db_intake import LOCAL_ARCHIVES_DIR_ALIAS
 from extractors.entity_types import ExtractedEntitiesNested, Media, ExtractedEntitiesFlattened, Account, Post
+from utils import db
 
 
 class FlattenedEntitiesTransform(BaseModel):
@@ -69,6 +71,7 @@ class EntitiesTransformConfig(BaseModel):
     flattened_entities_transform: Optional[FlattenedEntitiesTransform] = None
     nested_entities_transform: Optional[NestedEntitiesTransform] = None
     cluster_posts_under_accounts: bool = True
+    include_tags: bool = True
 
 
 def transform_and_nest(
@@ -80,6 +83,22 @@ def transform_and_nest(
             flattened_entities,
             config.flattened_entities_transform
         )
+    if config and config.include_tags:
+        account_ids = [a.id for a in flattened_entities.accounts if a.id is not None]
+        post_ids = [p.id for p in flattened_entities.posts if p.id is not None]
+        media_ids = [m.id for m in flattened_entities.media if m.id is not None]
+        accounts_tags = get_tags_by_entity_ids("account", account_ids)
+        posts_tags = get_tags_by_entity_ids("post", post_ids)
+        media_tags = get_tags_by_entity_ids("media", media_ids)
+        for a in flattened_entities.accounts:
+            if a.id in accounts_tags:
+                a.tags = accounts_tags[a.id]
+        for p in flattened_entities.posts:
+            if p.id in posts_tags:
+                p.tags = posts_tags[p.id]
+        for m in flattened_entities.media:
+            if m.id in media_tags:
+                m.tags = media_tags[m.id]
     nested_entities = nest_entities(flattened_entities)
     if config and config.nested_entities_transform:
         nested_entities = apply_nested_entities_transform(

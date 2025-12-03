@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
 from typing import List, Optional, Any, Union
+
+from pydantic import BaseModel, Field
 
 from extractors.models import VideoVersion, InstagramImageVersions2
 

@@ -1,7 +1,8 @@
-from typing import Optional, Literal, Any, Union, List
-from pydantic import BaseModel
 import tkinter as tk
 from tkinter import ttk
+from typing import Optional, Literal, Any, Union, List
+
+from pydantic import BaseModel
 
 
 class FormFieldBase(BaseModel):

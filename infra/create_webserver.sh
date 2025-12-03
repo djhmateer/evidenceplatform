@@ -152,6 +152,7 @@ export BROWSING_PLATFORM_DEV=0
 #  uv run python -m browsing_platform.server.scripts.add_user
 
 # insert data from archives
-uv run python extractors/archives_db_loader.py
+# uv run python extractors/archives_db_loader.py
+uv run python db_loaders/archives_db_loader.py
 
-uv run python extractors/archives_db_loader.py 2>&1 | tee output.log
+# uv run python extractors/archives_db_loader.py 2>&1 | tee output.log

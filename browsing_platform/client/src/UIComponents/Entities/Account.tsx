@@ -1,13 +1,6 @@
 import React from 'react';
 import {IAccountAndAssociatedEntities} from "../../types/entities";
-import {
-    Button, CircularProgress,
-    Collapse,
-    IconButton,
-    Paper,
-    Stack,
-    Typography
-} from "@mui/material";
+import {Button, CircularProgress, Collapse, IconButton, Paper, Stack, Typography} from "@mui/material";
 import LinkIcon from '@mui/icons-material/Link';
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import Post from "./Post";

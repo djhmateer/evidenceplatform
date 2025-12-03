@@ -1,17 +1,14 @@
 import React from 'react';
-import {
-    IMediaAndAssociatedEntities,
-} from "../../types/entities";
+import {IMediaAndAssociatedEntities,} from "../../types/entities";
 import {Box, Button, CircularProgress, Fade, IconButton, Stack, Typography} from "@mui/material";
 import SelfContainedPopover from "../SelfContainedComponents/selfContainedPopover";
 import ReactJson from "react-json-view";
 import MoreHorizIcon from "@mui/icons-material/MoreHoriz";
 import LinkIcon from "@mui/icons-material/Link";
-import {fetchMediaData, fetchMediaParts, fetchPostData} from "../../services/DataFetcher";
+import {fetchMediaData, fetchMediaParts} from "../../services/DataFetcher";
 import {anchor_local_static_files} from "../../services/server";
 import MediaPart from "./MediaPart";
 import {EntityViewerConfig} from "./EntitiesViewerConfig";
-import TextField from "@mui/material/TextField";
 import EntityAnnotator from "./Annotator";
 
 interface IProps {

@@ -6,6 +6,7 @@ import TextField from "@mui/material/TextField";
 import TagSelector from "../Tags/TagSelector";
 import SaveIcon from "@mui/icons-material/Save";
 import {saveAccountAnnotations, saveMediaAnnotations, savePostAnnotations} from "../../services/DataSaver";
+import {toast} from "material-react-toastify";
 
 interface IProps {
     entity: IMedia | IPost | IAccount | IMediaPart
@@ -29,6 +30,7 @@ interface IState {
 export default class EntityAnnotator extends React.Component <IProps, IState> {
     constructor(props: IProps) {
         super(props);
+        console.log(props.entity.tags)
         this.state = {
             annotations: {
                 notes: props.entity.notes || "",
@@ -60,6 +62,7 @@ export default class EntityAnnotator extends React.Component <IProps, IState> {
             if (this.props.onSave) {
                 this.props.onSave();
             }
+            toast.success("Annotations saved successfully.");
             this.setState((curr) => ({...curr, savingAnnotations: false, unsavedChanges: false}));
         });
     }
@@ -98,7 +101,7 @@ export default class EntityAnnotator extends React.Component <IProps, IState> {
                     }}
                 />
                 <TagSelector
-                    selectedTags={[]}
+                    selectedTags={this.state.annotations.tags}
                     onChange={(tags) => {
                         const annotations = this.state.annotations;
                         annotations.tags = tags;

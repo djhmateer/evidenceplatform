@@ -1,8 +1,5 @@
 import React from 'react';
-import {
-    Box,
-    CircularProgress, Stack, Typography,
-} from "@mui/material";
+import {Box, CircularProgress, Stack, Typography,} from "@mui/material";
 import {IArchiveSession,} from "../../types/entities";
 import ArchivingSession from "src/UIComponents/Entities/ArchivingSession";
 

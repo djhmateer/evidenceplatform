@@ -1,4 +1,5 @@
 import React from 'react';
+import 'material-react-toastify/dist/ReactToastify.css';
 import './lib/variables.scss'
 import './lib/global.scss'
 import './lib/layout.scss'
@@ -13,10 +14,10 @@ import Login from "./pages/Login";
 
 
 import {KeyStatesProvider} from './services/keys/keyStates';
+import {ToastContainer} from "material-react-toastify";
 import {incorporateArrayInQueue, IPopupAlert, IPreparedPopupAlert} from "./services/alerts/alerts";
 import withReactErrorSuppression from "./services/reactErrorSuppression/reactErrorSuppression";
 import Alert from "./UIComponents/Alert/Alert";
-import Account from "./UIComponents/Entities/Account";
 import AccountPage from "./pages/AccountPage";
 import PostPage from "./pages/PostPage";
 import MediaPage from "./pages/MediaPage";
@@ -81,6 +82,12 @@ class App extends React.Component <IAppProps, IAppState> {
                     <Alert
                         setQueue={(alertQueue: any) => this.setState({alertQueue})}
                         queue={this.state.alertQueue}
+                    />
+                    <ToastContainer
+                        position="bottom-left"
+                        bodyStyle={{
+                            color: '#000'
+                        }}
                     />
                 </Router>
             </KeyStatesProvider>

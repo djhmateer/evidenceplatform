@@ -1,10 +1,11 @@
-from pydantic import BaseModel
 from typing import Literal, Optional, Any
 
-import db
+from pydantic import BaseModel
+
 from browsing_platform.server.services.archiving_session import ArchiveSession
 from browsing_platform.server.services.media import get_media_by_posts, get_media_thumbnail_path
 from extractors.entity_types import Account, Post, Media
+from utils import db
 
 T_Search_Mode = Literal["media", "posts", "accounts", "archive_sessions", "all"]
 

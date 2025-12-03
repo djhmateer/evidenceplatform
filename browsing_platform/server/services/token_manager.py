@@ -5,7 +5,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-import db
+from utils import db
 
 TOKEN_LENGTH = 30
 TOKEN_EXPIRY = timedelta(days=30)

@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
 from typing import List, Optional, Any
+
+from pydantic import BaseModel, Field
 
 
 class InstagramCaption(BaseModel):
@@ -181,18 +182,18 @@ class InstagramHdProfilePicUrlInfo(BaseModel):
 class InstagramUser(BaseModel):
     typename: Optional[str] = Field(None, alias="__typename")
     ai_agent_owner_username: Optional[Any] = None
-    friendship_status: InstagramFriendshipStatus
-    id: str
+    friendship_status: Optional[InstagramFriendshipStatus] = None
+    id: Optional[str] = None
     is_private: Optional[bool] = None
     is_unpublished: Optional[bool] = None
     is_verified: Optional[bool] = None
-    pk: str
+    pk: Optional[str] = None
     profile_pic_url: Optional[str] = None
     show_account_transparency_details: Optional[bool] = None
     transparency_label: Optional[Any] = None
     transparency_product: Optional[Any] = None
     transparency_product_enabled: Optional[bool] = None
-    username: str
+    username: Optional[str] = None
     full_name: Optional[str] = None
     hd_profile_pic_url_info: Optional[InstagramHdProfilePicUrlInfo] = None
     is_embeds_disabled: Optional[bool] = None
@@ -238,7 +239,7 @@ class InstagramPost(BaseModel):
     has_audio: Optional[Any] = None
     has_liked: Optional[bool] = None
     has_viewer_saved: Optional[Any] = None
-    id: str
+    id: Optional[str] = None
     ig_media_sharing_disabled: Optional[bool] = None
     image_versions2: Optional[InstagramImageVersions2] = None
     inventory_source: Optional[Any] = None
@@ -253,7 +254,7 @@ class InstagramPost(BaseModel):
     main_feed_carousel_starting_media_id: Optional[Any] = None
     media_level_comment_controls: Optional[Any] = None
     media_overlay_info: Optional[Any] = None
-    media_type: int
+    media_type: Optional[int] = None
     number_of_qualities: Optional[Any] = None
     open_carousel_submission_state: Optional[str] = None
     organic_tracking_token: Optional[str] = None
@@ -270,7 +271,7 @@ class InstagramPost(BaseModel):
     social_context: Optional[List[Any]] = None
     sponsor_tags: Optional[Any] = None
     story_cta: Optional[Any] = None
-    taken_at: int
+    taken_at: Optional[int] = None
     top_likers: Optional[List[Any]] = None
     user: InstagramUser # This seems to be the same structure as owner in the example
     usertags: Optional[InstagramUserTags] = None

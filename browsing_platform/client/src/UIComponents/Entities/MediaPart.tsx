@@ -1,8 +1,5 @@
 import React from 'react';
-import {
-    IMedia,
-    IMediaPart,
-} from "../../types/entities";
+import {IMedia, IMediaPart,} from "../../types/entities";
 import {
     Box,
     Button,
@@ -10,8 +7,10 @@ import {
     CardActions,
     CardContent,
     CircularProgress,
-    InputLabel, Slider,
-    Stack, Typography
+    InputLabel,
+    Slider,
+    Stack,
+    Typography
 } from "@mui/material";
 
 import EditIcon from "@mui/icons-material/Edit";

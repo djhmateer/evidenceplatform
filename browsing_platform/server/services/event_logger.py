@@ -1,6 +1,6 @@
 from typing import Literal, Optional
 
-import db
+from utils import db
 
 
 def log_event(event_type: Literal["server_call", "sql_error", "scraping_error", "scraping_progress", "unknown_error",  "unauthorized_access", "login_attempt"],

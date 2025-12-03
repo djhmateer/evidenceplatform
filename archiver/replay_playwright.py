@@ -1,6 +1,8 @@
 import asyncio
 from pathlib import Path
+
 from playwright.async_api import async_playwright
+
 
 async def playback_har():
     # Request user input for the HAR file path

@@ -1,9 +1,10 @@
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import BaseModel
 
 from extractors.models_api_v1 import FriendshipsApiV1, CommentsApiV1, LikersApiV1, MediaInfoApiV1
 from extractors.models_har import HarRequest
+
 
 class ApiV1Context(BaseModel):
     url: Optional[str] = None

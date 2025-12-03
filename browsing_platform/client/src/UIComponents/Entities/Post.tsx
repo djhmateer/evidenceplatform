@@ -1,16 +1,12 @@
 import React from 'react';
 import {IPostAndAssociatedEntities} from "../../types/entities";
-import {Box, Button, CircularProgress, Collapse, Grid, IconButton, Paper, Stack, Typography} from "@mui/material";
+import {CircularProgress, Collapse, IconButton, Paper, Stack, Typography} from "@mui/material";
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import Media from "./Media";
 import ReactJson from "react-json-view";
 import LinkIcon from "@mui/icons-material/Link";
 import {fetchPostData} from "../../services/DataFetcher";
 import {EntityViewerConfig} from "./EntitiesViewerConfig";
-import TextField from "@mui/material/TextField";
-import TagSelector from "../Tags/TagSelector";
-import SaveIcon from "@mui/icons-material/Save";
-import {savePostAnnotations} from "../../services/DataSaver";
 import EntityAnnotator from "./Annotator";
 
 interface IProps {

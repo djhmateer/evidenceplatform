@@ -3,16 +3,7 @@ import server from '../services/server';
 import cookie from 'js-cookie';
 import './login/Login.scss';
 import withRouter, {IRouterProps} from "../services/withRouter";
-import {
-    CircularProgress,
-    FormControl,
-    IconButton,
-    Input,
-    InputLabel,
-    Modal,
-    Stack,
-    Tooltip
-} from "@mui/material";
+import {CircularProgress, FormControl, IconButton, Input, InputLabel, Modal, Stack, Tooltip} from "@mui/material";
 import {createTheme, ThemeProvider} from '@mui/material/styles';
 import {LocalFlorist, Visibility, VisibilityOff} from "@mui/icons-material";
 
@@ -133,16 +124,14 @@ class Login extends React.Component<IProps, IState> {
                             this.state.awaitingAuthentication
                                 ? <CircularProgress size={20}/>
                                 : <Tooltip title={`Login`} placement="top" arrow disableInteractive>
-                                    <span>
-                                        <IconButton
-                                            color="success"
-                                            size="small"
-                                            disabled={!this.state.password.length}
-                                            onClick={this.verifyPasswordLogin}
-                                        >
-                                            <LocalFlorist/>
-                                        </IconButton>
-                                    </span>
+                                    <IconButton
+                                        color="success"
+                                        size="small"
+                                        disabled={!this.state.password.length}
+                                        onClick={this.verifyPasswordLogin}
+                                    >
+                                        <LocalFlorist/>
+                                    </IconButton>
                                 </Tooltip>
                         }
                     </Stack>

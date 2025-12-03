@@ -3,9 +3,10 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Callable, TypeVar
-from pydantic import BaseModel
 
 import pyperclip
+from pydantic import BaseModel
+
 from extractors.entity_types import Post, Account, Media, \
     ExtractedEntitiesFlattened, Comment, Like, Follower, \
     SuggestedAccount, TaggedAccount, ExtractedEntitiesNested, AccountAndAssociatedEntities, PostAndAssociatedEntities, \
@@ -15,11 +16,11 @@ from extractors.extract_videos import acquire_videos, VideoAcquisitionConfig, Vi
 from extractors.models import MediaShortcode, HighlightsReelConnection, StoriesFeed, CommentsConnection
 from extractors.models_api_v1 import MediaInfoApiV1, CommentsApiV1, LikersApiV1, FriendshipsApiV1
 from extractors.models_graphql import ProfileTimelineGraphQL, ReelsMediaConnection, FriendsListGraphQL
+from extractors.reconcile_entities import reconcile_accounts, reconcile_posts, reconcile_media
 from extractors.structures_extraction import StructureType, structures_from_har
 from extractors.structures_extraction_api_v1 import ApiV1Response, ApiV1Context
 from extractors.structures_extraction_graphql import GraphQLResponse
 from extractors.structures_extraction_html import PageResponse
-from extractors.reconcile_entities import reconcile_accounts, reconcile_posts, reconcile_media
 
 
 class ExtractedHarData(BaseModel):

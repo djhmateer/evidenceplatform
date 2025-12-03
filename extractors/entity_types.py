@@ -1,7 +1,11 @@
-from datetime import datetime
-from pydantic import BaseModel, Field, field_validator
-from typing import Optional, Any, Literal
 import json
+from datetime import datetime
+from typing import Optional, Any, Literal
+
+from pydantic import BaseModel, Field, field_validator
+
+from browsing_platform.server.services.tag import ITagWithType
+
 
 class EntityBase(BaseModel):
     id: Optional[int] = None
@@ -9,6 +13,7 @@ class EntityBase(BaseModel):
     updated_at: Optional[datetime] = None
     canonical_id: Optional[int] = None
     notes: Optional[str] = None
+    tags: Optional[list[ITagWithType]] = None
 
 
 class Account(EntityBase):

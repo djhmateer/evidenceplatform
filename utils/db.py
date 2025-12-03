@@ -2,9 +2,9 @@ import json
 import os
 from typing import Literal
 
-from dotenv import load_dotenv
 import mysql
 import mysql.connector
+from dotenv import load_dotenv
 
 load_dotenv()
 USER = os.getenv("DB_USER")
@@ -13,13 +13,15 @@ DB_NAME = os.getenv("DB_NAME")
 DB_PORT = os.getenv("DB_PORT")
 DB_HOST = os.getenv("DB_HOST")
 
-cnx_pool = mysql.connector.pooling.MySQLConnectionPool(pool_name="connections", pool_size=20,
-                                                       pool_reset_session=True,
-                                                       host=DB_HOST,
-                                                       port=DB_PORT,
-                                                       database=DB_NAME,
-                                                       user=USER,
-                                                       password=PASSWORD)
+cnx_pool = mysql.connector.pooling.MySQLConnectionPool(
+    pool_name="connections", pool_size=20,
+    pool_reset_session=True,
+    host=DB_HOST,
+    port=DB_PORT,
+    database=DB_NAME,
+    user=USER,
+    password=PASSWORD
+)
 
 
 def execute_query(query, args, return_type: Literal["single_row", "rows", "id", "none", "debug"] = "rows"):
@@ -73,4 +75,3 @@ def select_result(cursor):
         return None
     results = {columns[i]: data[i] for i in range(len(columns))}
     return results
-

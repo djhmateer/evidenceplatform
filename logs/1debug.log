@@ -37,3 +37,5 @@
 2025-12-02 12:57:53,887 - browsing_platform.server.services.password_authenticator - INFO - verify_password: password verified successfully
 2025-12-02 12:57:53,887 - browsing_platform.server.services.password_authenticator - INFO - login_with_password: login successful for user_id=3
 2025-12-02 12:57:53,920 - browsing_platform.server.services.password_authenticator - INFO - login_with_password: token generated for user_id=3
+2025-12-03 15:49:47,663 - asyncio - DEBUG - Using selector: EpollSelector
+2025-12-03 15:53:37,928 - asyncio - DEBUG - Using selector: EpollSelector

@@ -1,11 +1,12 @@
+import os
+import tarfile
 from pathlib import Path
 from typing import Optional
 from zipfile import ZipFile, ZIP_DEFLATED
-import tarfile
-from utils import ROOT_DIR
-import os
+
 import zstandard as zstd
 
+from root_anchor import ROOT_DIR
 
 BATCH_SIZE_LIMIT = 10000 * 1024 * 1024
 

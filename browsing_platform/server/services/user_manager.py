@@ -1,9 +1,10 @@
 from datetime import datetime
 from typing import Optional
+
 from pydantic import BaseModel
 
-import db
 from browsing_platform.server.services.password_authenticator import set_user_password
+from utils import db
 
 
 class User(BaseModel):

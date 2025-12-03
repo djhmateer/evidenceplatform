@@ -5,7 +5,7 @@
 # react - vite - port 5173 - custom node webserver
 
 # webpack - port 3000
-cd browsingplatform/client 
+cd browsing_platform/client 
 
 # pnpm install
 pnpm update

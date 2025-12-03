@@ -1,8 +1,6 @@
 import json
 from pathlib import Path
 
-from extractors.extract_photos import acquire_photos
-from extractors.extract_videos import acquire_videos
 from extractors.structures_extraction import StructureType, structures_from_har
 
 

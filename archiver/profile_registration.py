@@ -1,8 +1,9 @@
 # profile_registration.py
-import os
 import json
+import os
 import time
 from pathlib import Path
+
 from playwright.sync_api import sync_playwright
 from pydantic import BaseModel
 
@@ -13,7 +14,7 @@ class Profile(BaseModel):
 
 
 def register_instagram_account():
-    profiles_dir = Path("profiles")
+    profiles_dir = Path("../profiles")
     profiles_dir.mkdir(exist_ok=True)
     map_path = profiles_dir / "map.json"
     profiles_map = []

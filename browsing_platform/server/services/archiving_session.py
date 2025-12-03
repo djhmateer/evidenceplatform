@@ -1,9 +1,11 @@
+import json
 from datetime import datetime
 from typing import Optional
+
 from pydantic import BaseModel, field_validator
-import db
-import json
+
 from extractors.entity_types import ExtractedEntitiesNested
+from utils import db
 
 
 class ArchiveSession(BaseModel):

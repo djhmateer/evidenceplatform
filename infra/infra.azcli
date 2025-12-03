@@ -8,11 +8,11 @@
 start_time=$(date +%s)
 
 # For dev purposes only
-cd ..
-git add .
-git commit -m "auto"
-git push
-cd infra
+# cd ..
+# git add .
+# git commit -m "auto"
+# git push
+# cd infra
 
 set -x
 
@@ -142,6 +142,8 @@ do
    n=$((n+1)) 
    sleep 15
 done
+
+rm -f all.zip # remove zip file 
 
 # even though this is there already, I need to do the unzip, so lets just copy it
 scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null infra/create_webserver.sh dave@${dnsname}.westeurope.cloudapp.azure.com:/home/dave/ 
