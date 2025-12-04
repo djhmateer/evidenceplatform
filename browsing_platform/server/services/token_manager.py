@@ -10,7 +10,6 @@ from utils import db
 TOKEN_LENGTH = 30
 TOKEN_EXPIRY = timedelta(days=30)
 
-
 class Token(BaseModel):
     id: Optional[int]
     user_id: int
@@ -41,7 +40,7 @@ def check_token(token: str):
         return TokenPermissions(valid=False, admin=False, user_id=None)
     else:
         token = Token(**token_check)
-        if token.last_use < datetime.now() + TOKEN_EXPIRY:
+        if token.last_use > datetime.now() - TOKEN_EXPIRY:
             return TokenPermissions(valid=True, admin=(token.admin ==1), user_id=token.user_id)
         return TokenPermissions(valid=False, admin=False, user_id=None)
 

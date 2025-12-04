@@ -85,6 +85,14 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
 
+        # Security headers
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        if is_production:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
         if is_production:
             duration_ms = (time.time() - start_time) * 1000
             client_ip = request.headers.get("X-Real-IP", request.client.host if request.client else "unknown")
