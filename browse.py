@@ -40,9 +40,19 @@ from browsing_platform.server.routes import account, post, media, media_part, ar
 from browsing_platform.server.services.token_manager import check_token
 app = FastAPI()
 
+# CORS configuration
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",      # Local React dev server
+    "http://localhost:4444",      # Local API
+]
+if is_production:
+    ALLOWED_ORIGINS = [
+        "https://evidenceplatform.org",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
