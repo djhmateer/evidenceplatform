@@ -1,4 +1,0 @@
-Traceback (most recent call last):
-  File "/home/dave/code/evidenceplatform/extractors/archives_db_loader.py", line 7, in <module>
-    from pytz import timezone as pytz_timezone
-ModuleNotFoundError: No module named 'pytz'

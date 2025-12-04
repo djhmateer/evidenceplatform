@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sys
 import traceback
 
 from dateutil import parser
@@ -321,7 +322,13 @@ def add_missing_metadata():
 
 
 if __name__ == "__main__":
-    stage = input("Enter stage (register, parse, extract, full, add_attachments, clear_errors, add_metadata): ").strip().lower()
+    valid_stages = ["register", "parse", "extract", "full", "add_attachments", "clear_errors", "add_metadata"]
+
+    if len(sys.argv) > 1:
+        stage = sys.argv[1].strip().lower()
+    else:
+        stage = input(f"Enter stage ({', '.join(valid_stages)}): ").strip().lower()
+
     if stage == "register":
         register_archives()
     elif stage == "parse":
@@ -339,3 +346,7 @@ if __name__ == "__main__":
         add_missing_metadata()
     elif stage == "clear_errors":
         clear_extraction_errors()
+    else:
+        print(f"Unknown stage: {stage}")
+        print(f"Valid stages: {', '.join(valid_stages)}")
+        sys.exit(1)

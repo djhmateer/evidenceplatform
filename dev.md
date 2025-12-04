@@ -25,6 +25,33 @@ uv sync
 # port 4444
 BROWSING_PLATFORM_DEV=1 uv run python browse.py
 
+
+
+
+# prod helper
+export ENVIRONMENT=production
+export DB_USER=golf
+export DB_PASS=password5
+export DB_NAME=evidenceplatform
+export DB_PORT=3306
+export DB_HOST=localhost
+export DEFAULT_SIGNATURE=your_prod_signature
+export BROWSING_PLATFORM_DEV=0
+
+uv run python db_loaders/archives_db_loader.py full
+
+
+
+
+
+
+
+
+
+
+
+
+
 # port 8000 by default (vanilla on eplatform)
 # ENVIRONMENT=development uv run uvicorn main:app --reload
 

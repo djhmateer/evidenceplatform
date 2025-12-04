@@ -153,9 +153,15 @@ scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null infra/create_web
 # this will call the unzip of all.zip
 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null dave@${dnsname}.westeurope.cloudapp.azure.com 'sed -i "s/\r$//" create_webserver.sh && chmod +x create_webserver.sh && /home/dave/create_webserver.sh'
 
+
 # copy up sample data from archives folder. notice order of arguments -r must be first
 scp -r -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null archives/. dave@${dnsname}.westeurope.cloudapp.azure.com:/home/dave/archives/
 
+
+# run import_data
+# ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null dave@${dnsname}.westeurope.cloudapp.azure.com 'uv run python /home/dave/db_loaders/archives_db_loader.py full'
+
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null dave@${dnsname}.westeurope.cloudapp.azure.com 'ENVIRONMENT=production DB_USER=golf DB_PASS=password5 DB_NAME=evidenceplatform DB_PORT=3306 DB_HOST=localhost DEFAULT_SIGNATURE=your_prod_signature BROWSING_PLATFORM_DEV=0 /home/dave/.local/bin/uv run python /home/dave/db_loaders/archives_db_loader.py full'
 
 # delete old resource groups
 groupstodel=$(az group list --query "[?contains(name, '${rgprefix}')]".name --output tsv)
