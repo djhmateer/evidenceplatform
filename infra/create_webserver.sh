@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 # disable auto upgrades by apt - in dev mode only
 cd /home/dave
