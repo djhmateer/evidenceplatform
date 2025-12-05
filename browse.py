@@ -12,6 +12,13 @@ from dotenv import load_dotenv
 load_dotenv()
 is_production = os.getenv("ENVIRONMENT") == "production"
 
+# Security check: prevent dev mode from being enabled in production
+if is_production and os.getenv("BROWSING_PLATFORM_DEV") == "1":
+    raise RuntimeError(
+        "FATAL: BROWSING_PLATFORM_DEV=1 is set in production environment. "
+        "This would bypass all authentication. Refusing to start."
+    )
+
 # Create logs directory if it doesn't exist
 os.makedirs("logs", exist_ok=True)
 

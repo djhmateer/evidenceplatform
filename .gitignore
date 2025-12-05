@@ -1,12 +1,15 @@
 .venv/
 .idea/*
-__pycache__/*
+
+# Python cache - ignore everywhere
+__pycache__/
+*.pyc
+*.pyo
+
 archives/*
 temp_video_segments/*
 temp/*
 profiles/*
-/extractors/__pycache__
-/summarizers/__pycache__
 build/*
 dist/*
 commit_id.txt
@@ -16,13 +19,14 @@ ffmpeg/*
 open_ssl_location.txt
 /.env
 /packaged_archives/
-browsing_platform/server/routes/__pycache__/*
-browsing_platform/server/services/__pycache__/*
 /thumbnails
 browsing_platform/client/.env
 
 secrets
 sshCurrentVm.sh
 all.zip
-logs
+logs*
+output.log
+
+
 

@@ -90,7 +90,7 @@ az vm create \
     --location ${region} \
     --nics ${nicName} \
     --image ${image} \
-    --ssh-key-values @~/.ssh/id_rsa_azure.pub \
+    --ssh-key-values @~/.ssh/id_rsa_azure.pub ../secrets/yaniv_glan.pub \
     --size Standard_B2s
 else
  echo "ping"
@@ -130,8 +130,12 @@ cd .. # so now will be in project root ie /home/dave/code/evidenceplatform
 
 rm -f all.zip # remove old zip file even if it doesn't exist
 
+# go through archives folders making sure any sanitized.har files are removed
+find /home/dave/code/evidenceplatform/archives -name "sanitized.har" -type f -delete
+
+
 zip -r all.zip . -x "*/node_modules/*" "node_modules/*" "*/.venv/*" ".venv/*" "*/__pycache__/*" "*/dist/*" "dist/*" "*/.git/*" ".git/*" "*/.vscode/*" ".vscode/*" \
- "*.claude*" "*.env.development*" "*logs/*" "*archives/*" "*thumbnails/*" > /dev/null
+ "*.claude*" "*.env.development*" "*logs/*" "*logs_db_loader/*" "*archives/*" "*thumbnails/*" "*/sanitized.har" > /dev/null
 
 
 # I have seen this first scp timeout so retry until it works
@@ -159,8 +163,6 @@ scp -r -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null archives/. da
 
 
 # run import_data
-# ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null dave@${dnsname}.westeurope.cloudapp.azure.com 'uv run python /home/dave/db_loaders/archives_db_loader.py full'
-
 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null dave@${dnsname}.westeurope.cloudapp.azure.com 'ENVIRONMENT=production DB_USER=golf DB_PASS=password5 DB_NAME=evidenceplatform DB_PORT=3306 DB_HOST=localhost DEFAULT_SIGNATURE=your_prod_signature BROWSING_PLATFORM_DEV=0 /home/dave/.local/bin/uv run python /home/dave/db_loaders/archives_db_loader.py full'
 
 # delete old resource groups
