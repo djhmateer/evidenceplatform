@@ -132,12 +132,19 @@ async def serve_spa(request: Request, full_path: str):
         return Response('{"detail":"Not Found"}', status_code=404, media_type="application/json")
 
     build_dir = "browsing_platform/client/build"
-    file_path = os.path.join(build_dir, full_path)      
+    file_path = os.path.join(build_dir, full_path)
+
+    # Serve actual static files if they exist
     if full_path and os.path.isfile(file_path):
-        # logger.info(f"SPA catch-all: Serving static file -> {file_path}")
         return FileResponse(file_path)
 
-    # logger.info(f"SPA catch-all: Serving index.html for -> {full_path or '/'}")
+    # If it looks like a file request (has extension) but doesn't exist, return 404
+    # This prevents returning index.html with 200 for missing .json, .js, .css, etc.
+    if full_path and '.' in full_path.split('/')[-1]:
+        logger.debug(f"SPA catch-all: File not found -> {full_path}")
+        return Response('Not Found', status_code=404)
+
+    # Otherwise, serve index.html for SPA client-side routing (e.g., /account/123)
     return FileResponse(os.path.join(build_dir, "index.html"))
 
 if __name__ == "__main__":
