@@ -69,7 +69,7 @@
     "react-transition-group": "^4.4.5",
     "rison": "^0.1.1",
     "rison-node": "^2.1.1",
-    "sass": "^1.94.2",
+    "sass": "^1.96.0",
     "shuffle-seed": "^1.1.6",
     "string-width": "^7.2.0",
     "styled-jsx": "latest",

@@ -248,6 +248,13 @@ def extract_entities():
     extracted_count = 0
     error_count = 0
 
+    # Cumulative timing for summary
+    total_c1_time = 0.0  # deserialize structures
+    total_c2_time = 0.0  # har_data_to_entities
+    total_c3_time = 0.0  # incorporate_structures_into_db
+    total_c4_time = 0.0  # update archive_session
+    total_entities = {"accounts": 0, "posts": 0, "media": 0}
+
     while True:
         # Find the next archive session that has been parsed but not yet had entities extracted
         # Requires: parsed_content set (Part B done), no errors, HAR source type
@@ -263,9 +270,23 @@ def extract_entities():
             # No more archives to process
             elapsed = time.time() - start_time
             logger.info(f"Part C complete: {extracted_count} archives processed, {error_count} errors in {elapsed:.1f}s")
+            logger.info(
+                f"Part C timing breakdown: "
+                f"C1 deserialize={total_c1_time:.1f}s, "
+                f"C2 har_to_entities={total_c2_time:.1f}s, "
+                f"C3 db_insert={total_c3_time:.1f}s, "
+                f"C4 update={total_c4_time:.1f}s"
+            )
+            logger.info(
+                f"Part C totals: "
+                f"{total_entities['accounts']} accounts, "
+                f"{total_entities['posts']} posts, "
+                f"{total_entities['media']} media"
+            )
             return
 
         entry_id = entry['external_id'] or entry['id']
+        entry_start = time.time()
         try:
             logger.info(f"Extracting entities for: {entry_id}")
 
@@ -274,28 +295,52 @@ def extract_entities():
             archive_dir = ROOT_ARCHIVES / archive_name
             har_path = archive_dir / "archive.har"
 
-            # Deserialize the parsed structures from Part B (stored as JSON in the DB)
+            # Step C1: Deserialize the parsed structures from Part B (stored as JSON in the DB)
+            step_start = time.time()
             har_data = ExtractedHarData(**json.loads(entry['structures']))
+            c1_time = time.time() - step_start
+            total_c1_time += c1_time
+            logger.debug(f"  C1 deserialize structures: {c1_time:.2f}s")
 
-            # Convert raw HAR structures into normalized entity objects (accounts, posts, media)
+            # Step C2: Convert raw HAR structures into normalized entity objects (accounts, posts, media)
+            step_start = time.time()
             entities = har_data_to_entities(
                 har_path,
                 har_data.structures,
                 har_data.videos,
                 har_data.photos
             )
+            c2_time = time.time() - step_start
+            total_c2_time += c2_time
+            total_entities["accounts"] += len(entities.accounts)
+            total_entities["posts"] += len(entities.posts)
+            total_entities["media"] += len(entities.media)
+            logger.debug(
+                f"  C2 har_data_to_entities: {c2_time:.2f}s "
+                f"(accounts={len(entities.accounts)}, posts={len(entities.posts)}, media={len(entities.media)})"
+            )
 
-            # Insert/update entities in the database tables (account, post, media, etc.)
+            # Step C3: Insert/update entities in the database tables (account, post, media, etc.)
             # Also links entities to this archive_session
+            step_start = time.time()
             incorporate_structures_into_db(entities, entry['id'], archive_dir)
+            c3_time = time.time() - step_start
+            total_c3_time += c3_time
+            logger.debug(f"  C3 incorporate_structures_into_db: {c3_time:.2f}s")
 
-            # Mark this archive session as successfully processed
+            # Step C4: Mark this archive session as successfully processed
+            step_start = time.time()
             db.execute_query(
                 "UPDATE archive_session SET extraction_error = NULL, extracted_entities = %(v)s WHERE external_id = %(id)s",
                 {"id": entry_id, "v": ENTITY_EXTRACTION_ALGORITHM_VERSION},
                 return_type="none"
             )
-            logger.info(f"Successfully extracted entities for: {entry_id}")
+            c4_time = time.time() - step_start
+            total_c4_time += c4_time
+            logger.debug(f"  C4 update archive_session: {c4_time:.2f}s")
+
+            entry_elapsed = time.time() - entry_start
+            logger.info(f"Successfully extracted entities for: {entry_id} in {entry_elapsed:.1f}s")
             extracted_count += 1
 
         except Exception as e:
