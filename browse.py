@@ -42,9 +42,9 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 from starlette.middleware.base import BaseHTTPMiddleware
-
 from browsing_platform.server.routes import account, post, media, media_part, archiving_session, login, search, \
-    permissions, tags, annotate
+    permissions, tags, annotate, share
+from browsing_platform.server.services.sharing_manager import get_link_permissions
 from browsing_platform.server.services.token_manager import check_token
 app = FastAPI()
 
@@ -80,17 +80,24 @@ app.mount(
 )
 
 
-class TokenAuthMiddleware(BaseHTTPMiddleware):
+class StaticFilesAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         start_time = time.time()
-
-        if is_production:
-            if request.url.path.startswith("/archives") or request.url.path.startswith("/thumbnails"):
-                token = request.query_params.get("token")
-                if not token or not check_token(token):
-                    logger.warning(f"Unauthorized access attempt: {request.url.path}")
-                    return Response("Unauthorized", status_code=401)
-
+        if request.url.path.startswith("/archives") or request.url.path.startswith("/thumbnails"):
+            # Prefer per-file token 'ft' which is bound to the file path and cannot be reused for other files.
+            file_token = request.query_params.get("ft")
+            try:
+                # Use the request path (including leading slash) as the file_path binding.
+                payload = decrypt_file_token(file_token, request.url.path)
+            except FileTokenError as e:
+                logger.warning(f"File token validation failed for {request.url.path}: {e}")
+                return Response("Unauthorized", status_code=401)
+            # access is allowed if the user supplied a valid login token or a share token
+            # share tokens can be used to access static media even if the entities the media is attached to is beyond the share scope
+            # this is fine because a user can not generate an encrypted payload containing their share token for arbitrary files without knowing the server secret
+            if not check_token(payload.login_token).valid and not get_link_permissions(payload.login_token).view:
+                logger.warning(f"Invalid embedded login token for {request.url.path}")
+                return Response("Unauthorized", status_code=401)
         response = await call_next(request)
 
         # Security headers
@@ -109,18 +116,19 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
         return response
 
 
-app.add_middleware(TokenAuthMiddleware)
+app.add_middleware(StaticFilesAuthMiddleware)
 for r in [
     account.router,
     post.router,
     media.router,
     media_part.router,
     annotate.router,
+    tags.router,
     archiving_session.router,
     search.router,
     login.router,
     permissions.router,
-    tags.router
+    share.router,
 ]:
     app.include_router(r, prefix="/api")
 

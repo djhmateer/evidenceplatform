@@ -1,12 +1,15 @@
 import React from "react";
 
 type IEntityDisplayOption = "display" | "hide" | "collapse";
-type IEntityAnnotatorOption = "show" | "hide";
+type IEntityAnnotatorOption = "show" | "hide" | "disable";
 type DeepPartial<T> = {
     [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
 };
 
 interface IEntityViewerConfig {
+    all: {
+        hideInnerLinks?: boolean;
+    }
     account: {
         display: IEntityDisplayOption;
         annotator: IEntityAnnotatorOption;
@@ -41,6 +44,9 @@ interface IEntityViewerConfig {
 }
 
 export class EntityViewerConfig implements IEntityViewerConfig {
+    all = {
+        hideInnerLinks: false
+    }
     account = {
         display: "display" as IEntityDisplayOption,
         annotator: "hide" as IEntityAnnotatorOption,

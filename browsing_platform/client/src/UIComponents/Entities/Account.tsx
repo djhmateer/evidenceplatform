@@ -9,6 +9,8 @@ import {fetchAccountData} from "../../services/DataFetcher";
 import {EntityViewerConfig} from "./EntitiesViewerConfig";
 import EntityAnnotator from "./Annotator";
 
+import {getShareTokenFromHref, SHARE_URL_PARAM} from "../../services/linkSharing";
+
 interface IProps {
     account: IAccountAndAssociatedEntities
     viewerConfig?: EntityViewerConfig
@@ -47,18 +49,20 @@ export default class Account extends React.Component <IProps, IState> {
 
     render() {
         const account = this.state.account;
+        const shareToken = getShareTokenFromHref()
+
         return <Paper sx={{padding: '1em'}}>
             <Stack gap={0.5} sx={{height: "100%"}}>
                 <Stack gap={1} direction={"row"} alignItems={"center"}>
-                    <a href={account.url}>
-                        <Typography variant={"body1"}>{account.url}</Typography>
-                    </a>
-                    <IconButton
-                        color={"primary"}
-                        href={"/account/" + account.id}
-                    >
-                        <LinkIcon/>
-                    </IconButton>
+                    <Typography variant={"body1"}>{account.url}</Typography>
+                    {
+                        this.props.viewerConfig?.all?.hideInnerLinks ? null : <IconButton
+                            color={"primary"}
+                            href={"/account/" + account.id + (shareToken ? `?${SHARE_URL_PARAM}=${shareToken}` : "")}
+                        >
+                            <LinkIcon/>
+                        </IconButton>
+                    }
                 </Stack>
                 {account.display_name ? <Typography variant="h4">{account.display_name}</Typography> : null}
                 <Typography variant="caption">{account.bio}</Typography>
@@ -85,13 +89,18 @@ export default class Account extends React.Component <IProps, IState> {
                                 <ReactJson
                                     src={account.data}
                                     enableClipboard={false}
+                                    style={{wordBreak: 'break-word'}}
                                 /> :
                                 null
                     }
                 </Collapse>
                 {
-                    this.props.viewerConfig?.account?.annotator === "show" && <Stack gap={1}>
-                        <EntityAnnotator entity={this.state.account} entityType={"account"} readonly={false}/>
+                    this.props.viewerConfig?.account?.annotator !== "hide" && <Stack gap={1}>
+                        <EntityAnnotator
+                            entity={this.state.account}
+                            entityType={"account"}
+                            readonly={this.props.viewerConfig?.account?.annotator === "disable"}
+                        />
                     </Stack>
                 }
                 <Stack direction={"column"} sx={{width: "100%", flexGrow: 1}} gap={1}>

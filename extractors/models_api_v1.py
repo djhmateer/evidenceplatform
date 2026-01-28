@@ -98,9 +98,9 @@ class LikersApiV1(BaseModel):
         extra = "allow"
 
 class CommentUserApiV1(BaseModel):
-    pk: str
-    pk_id: str
-    id: str # Duplicates pk and pk_id in the example
+    pk: Union[str, int]
+    pk_id: Union[str, int]
+    id: Union[str, int]
     full_name: str
     is_private: bool
     is_unpublished: Optional[bool] = None
@@ -117,8 +117,8 @@ class CommentUserApiV1(BaseModel):
         extra = "allow"
 
 class CommentCaptionApiV1(BaseModel):
-    pk: str
-    user_id: str
+    pk: Union[str, int]
+    user_id: Union[str, int]
     type: int
     did_report_as_spam: bool
     created_at: int
@@ -144,8 +144,8 @@ class CommentCaptionApiV1(BaseModel):
         extra = "allow"
 
 class CommentItemApiV1(BaseModel):
-    pk: str
-    user_id: str
+    pk: Union[str, int]
+    user_id: Union[str, int]
     type: int
     did_report_as_spam: bool
     created_at: int

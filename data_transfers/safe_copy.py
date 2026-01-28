@@ -23,11 +23,15 @@ def copy_archives(dest_dir: Path):
 
 
     to_copy: list[Path] = [a for a in archive_dirs if a.name not in already_packaged]
-    current_batch: list[Path] = []
-    current_batch_size = 0
     for i in range(len(to_copy)):
         a = to_copy[i]
         print(f"processing {a.name}")
+        success = safe_copy_archive(a, dest_dir)
+        if success:
+            with packaged_list_path.open("a", encoding="utf-8") as f:
+                f.write(f"{a.name}\n")
+        else:
+            print(f"Failed to copy archive {a.name}.")
 
 
 def generate_file_sha256(file_path: Path) -> Optional[str]:
@@ -93,7 +97,7 @@ def safe_copy_archive(src_path: Path, dest_dir: Path) -> bool:
     for attempt in range(max_retries):
         if len(successfully_copied) == len(files_to_copy):
             print(f"All files copied successfully after {attempt} attempts.")
-            return True
+            break
         for relative_path in files_to_copy:
             if relative_path in successfully_copied:
                 continue
@@ -111,21 +115,19 @@ def safe_copy_archive(src_path: Path, dest_dir: Path) -> bool:
                             dest_parent,
                             src_file_path.name,
                             "/COPY:DAT",
-                            "/DCOPY:T",
+                            "/DCOPY:DAT",
                             "/NFL",
                             "/NDL",
                             "/NJH",
                             "/NJS",
                         ]
                         res = subprocess.run(cmd, capture_output=True)
-                        print("robocopy stdout:", res.stdout)
-                        print("robocopy stderr:", res.stderr)
                         if res.returncode >= 8:
+                            print("robocopy stdout:", res.stdout)
+                            print("robocopy stderr:", res.stderr)
                             raise Exception(f"robocopy failed with returncode {res.returncode}")
                     else:
                         shutil.copy2(src_file_path, dest_file_path)
-                    with src_file_path.open("rb") as src_f, dest_file_path.open("wb") as dest_f:
-                        dest_f.write(src_f.read())
                 # verify checksum
                 dest_file_sha256 = generate_file_sha256(dest_file_path)
                 if dest_file_sha256 == checksum_dict[relative_path]:
@@ -149,6 +151,6 @@ def safe_copy_archive(src_path: Path, dest_dir: Path) -> bool:
     return True
 
 if __name__ == "__main__":
-    archive_location = Path(input("Input path to archive directory: ").strip().strip('"').strip("'"))
+    #archive_location = Path(input("Input path to archive directory: ").strip().strip('"').strip("'"))
     dest_directory = Path(input("Input path to destination directory: ").strip().strip('"').strip("'"))
-    safe_copy_archive(archive_location, dest_directory)
+    copy_archives(dest_directory)

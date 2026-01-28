@@ -23,7 +23,8 @@ interface IState {
 const isPlayableVideo = (filename?: string) => {
     if (!filename) return false;
     const lower = filename.toLowerCase();
-    return lower.endsWith('.mp4') || lower.endsWith('.ogg') || lower.endsWith('.webm');
+    const noSearch = lower.split('?')[0];
+    return noSearch.endsWith('.mp4') || noSearch.endsWith('.ogg') || noSearch.endsWith('.webm');
 }
 
 
@@ -77,7 +78,7 @@ export default class ArchiveSessionMetadata extends React.Component <IProps, ISt
                 >
                     {
                         archiveSession.attachments?.screen_recordings?.map((sr) => {
-                            const resourceUrl = anchor_local_static_files(archiveSession.archive_location + '/' + sr) || undefined
+                            const resourceUrl = anchor_local_static_files(sr) || undefined
                             if (isPlayableVideo(sr)) {
                                 return <video
                                     key={sr}

@@ -20,7 +20,8 @@ import SearchIcon from "@mui/icons-material/Search";
 import LogoutIcon from '@mui/icons-material/Logout';
 
 type IProps = {
-    children: ReactNode
+    children: ReactNode,
+    hideMenuButton?: boolean
 } & IRouterProps
 
 interface IState {
@@ -94,10 +95,14 @@ class TopNavBar extends React.Component<IProps, IState> {
         return <>
             <AppBar position="static" sx={{backgroundColor: "#282c34"}}>
                 <Toolbar>
-                    <Stack direction={"row"} gap={2} alignItems={"center"}>
-                        <IconButton onClick={this.toggleMenu} color="inherit">
-                            <MenuIcon/>
-                        </IconButton>
+                    <Stack direction={"row"} gap={2} alignItems={"center"} sx={{width: "100%"}}>
+                        {
+                            this.props.hideMenuButton ?
+                                null :
+                                <IconButton onClick={this.toggleMenu} color="inherit">
+                                    <MenuIcon/>
+                                </IconButton>
+                        }
                         {this.props.children}
                     </Stack>
                 </Toolbar>
@@ -128,7 +133,7 @@ class TopNavBar extends React.Component<IProps, IState> {
                             <ListItemIcon>
                                 <SearchIcon/>
                             </ListItemIcon>
-                            <ListItemText primary="Search" />
+                            <ListItemText primary="Search"/>
                         </ListItemButton>
                         <ListItemButton
                             onClick={(_) => {
@@ -138,7 +143,7 @@ class TopNavBar extends React.Component<IProps, IState> {
                             <ListItemIcon>
                                 <LogoutIcon/>
                             </ListItemIcon>
-                            <ListItemText primary="Logout" />
+                            <ListItemText primary="Logout"/>
                         </ListItemButton>
                     </List>
                 </Stack>

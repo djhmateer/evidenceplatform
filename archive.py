@@ -1,34 +1,37 @@
 # archive.py
-import datetime
-import json
 import os
-import shutil
 import sys
-import threading
+import pygetwindow as gw
 import time
+import json
+import datetime
 from hashlib import md5
-from pathlib import Path
 from typing import Literal, Optional
 
-import cv2
-import numpy as np
-import pyautogui
-import pygetwindow as gw
-from dotenv import load_dotenv
-from har2warc.har2warc import har2warc
-from playwright.sync_api import sync_playwright, Browser, BrowserContext
-from pydantic import BaseModel
-
 from archiver.dialogs import show_dialog_form, DialogForm, FormFieldText, FormFieldBool, FormSection
-from archiver.profile_registration import Profile
-from archiver.profile_selection import select_profile
 from extractors.extract_photos import PhotoAcquisitionConfig
 from extractors.extract_videos import VideoAcquisitionConfig
-from summarizers.entities_summary_generator import generate_entities_summary
 from utils.ffmpeg_installer import ensure_ffmpeg_installed
 from utils.git_helper import ensure_committed
-from utils.misc import get_my_public_ip, get_system_info
+
+import cv2
+import pyautogui
+import threading
+import shutil
+
+from pydantic import BaseModel
+from har2warc.har2warc import har2warc
+import numpy as np
+from pathlib import Path
+from playwright.sync_api import sync_playwright, Browser, BrowserContext
+from dotenv import load_dotenv
+
+from archiver.profile_selection import select_profile
 from utils.timestamper import timestamp_file
+from archiver.profile_registration import Profile
+from summarizers.entities_summary_generator import generate_entities_summary
+
+from utils.misc import get_my_public_ip, get_system_info
 
 SCREEN_SIZE = tuple(pyautogui.size())
 commit_id = None

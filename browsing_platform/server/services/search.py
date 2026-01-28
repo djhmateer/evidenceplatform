@@ -1,7 +1,15 @@
 import logging
+from dataclasses import Field
 from typing import Literal, Optional, Any
+from urllib.parse import urlparse, urlencode, urlunparse, parse_qsl
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from browsing_platform.server.services.file_tokens import generate_file_token
+from db_loaders.db_intake import LOCAL_ARCHIVES_DIR_ALIAS
+from db_loaders.thumbnail_generator import LOCAL_THUMBNAILS_DIR_ALIAS
+
+logger = logging.getLogger(__name__)
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +29,11 @@ class ISearchQuery(BaseModel):
     page_size: int
 
 
+class SearchResultTransform(BaseModel):
+    local_files_root: Optional[str] = None
+    access_token: Optional[str] = None
+
+
 class SearchResult(BaseModel):
     page: str
     id: int
@@ -28,16 +41,22 @@ class SearchResult(BaseModel):
     details: Optional[str]
     thumbnails: Optional[list[str]] = None
 
+    @field_validator('thumbnails', mode='before')
+    def parse_thumbnails(cls, v, _):
+        if not v:
+            v = []
+        return v
 
-def search_base(query: ISearchQuery) -> list[SearchResult]:
+
+def search_base(query: ISearchQuery, search_results_transform: SearchResultTransform) -> list[SearchResult]:
     if query.search_mode == "archive_sessions":
-        return search_archive_sessions(query)
+        return search_archive_sessions(query, search_results_transform)
     elif query.search_mode == "accounts":
-        return search_accounts(query)
+        return search_accounts(query, search_results_transform)
     elif query.search_mode == "posts":
-        return search_posts(query)
+        return search_posts(query, search_results_transform)
     elif query.search_mode == "media":
-        return search_media(query)
+        return search_media(query, search_results_transform)
     else:
         print(f"Search mode {query.search_mode} not implemented yet.")
         return []
@@ -48,10 +67,10 @@ def default_fulltext_query(search_term: Optional[str]) -> Optional[str]:
         return None
     if "+" in search_term or "-" in search_term or "*" in search_term:
         return search_term
-    return " ".join([f'+"{word}' for word in search_term.split() if word])
+    return " ".join([f'+"{word}"' for word in search_term.split() if word])
 
 
-def search_archive_sessions(query: ISearchQuery) -> list[SearchResult]:
+def search_archive_sessions(query: ISearchQuery, search_results_transform: SearchResultTransform) -> list[SearchResult]:
     query_args: dict["str", Any] = {
         "limit": query.page_size,
         "offset": (query.page_number - 1) * query.page_size,
@@ -66,7 +85,7 @@ def search_archive_sessions(query: ISearchQuery) -> list[SearchResult]:
         general_filter, general_args = json_logic_format_to_where_clause(query.advanced_filters, "archive_session")
         where_clauses.append(general_filter)
         query_args.update(general_args)
-    results = db.execute_query(
+    rows = db.execute_query(
         f"""SELECT *
            FROM archive_session
               {'WHERE ' + ' AND '.join(where_clauses) if len(where_clauses) else ''}
@@ -74,7 +93,7 @@ def search_archive_sessions(query: ISearchQuery) -> list[SearchResult]:
            LIMIT %(limit)s OFFSET %(offset)s""",
         query_args
     )
-    sessions = [ArchiveSession(**row) for row in results]
+    sessions = [ArchiveSession(**row) for row in rows]
     return [SearchResult(
         page="archive",
         id=s.id,
@@ -83,7 +102,7 @@ def search_archive_sessions(query: ISearchQuery) -> list[SearchResult]:
     ) for s in sessions]
 
 
-def search_accounts(query: ISearchQuery) -> list[SearchResult]:
+def search_accounts(query: ISearchQuery, search_results_transform: SearchResultTransform) -> list[SearchResult]:
     query_args: dict["str", Any] = {
         "limit": query.page_size,
         "offset": (query.page_number - 1) * query.page_size,
@@ -96,7 +115,7 @@ def search_accounts(query: ISearchQuery) -> list[SearchResult]:
         general_filter, general_args = json_logic_format_to_where_clause(query.advanced_filters, "account")
         where_clauses.append(general_filter)
         query_args.update(general_args)
-    results = db.execute_query(
+    rows = db.execute_query(
         f"""SELECT *
            FROM account
            {'WHERE ' + ' AND '.join(where_clauses) if len(where_clauses) else ''}
@@ -104,16 +123,18 @@ def search_accounts(query: ISearchQuery) -> list[SearchResult]:
            LIMIT %(limit)s OFFSET %(offset)s""",
         query_args
     )
-    accounts = [Account(**row) for row in results]
-    return [SearchResult(
+    accounts = [Account(**row) for row in rows]
+    results = [SearchResult(
         page="account",
         id=a.id,
         title=a.url + (f" ({a.display_name})" if a.display_name else ""),
         details=a.bio or ""
     ) for a in accounts]
+    results = apply_search_results_transform(results, search_results_transform)
+    return results
 
 
-def search_posts(query: ISearchQuery) -> list[SearchResult]:
+def search_posts(query: ISearchQuery, search_results_transform: SearchResultTransform) -> list[SearchResult]:
     query_args: dict["str", Any] = {
         "limit": query.page_size,
         "offset": (query.page_number - 1) * query.page_size,
@@ -126,7 +147,7 @@ def search_posts(query: ISearchQuery) -> list[SearchResult]:
         general_filter, general_args = json_logic_format_to_where_clause(query.advanced_filters, "post")
         where_clauses.append(general_filter)
         query_args.update(general_args)
-    results = db.execute_query(
+    rows = db.execute_query(
         f"""SELECT *
            FROM post
            {'WHERE ' + ' AND '.join(where_clauses) if len(where_clauses) else ''}
@@ -134,7 +155,7 @@ def search_posts(query: ISearchQuery) -> list[SearchResult]:
            LIMIT %(limit)s OFFSET %(offset)s""",
         query_args
     )
-    posts = [Post(**row) for row in results]
+    posts = [Post(**row) for row in rows]
     media = get_media_by_posts(posts)
     post_thumbnails: dict[int, list[str]] = {}
     for m in media:
@@ -143,9 +164,9 @@ def search_posts(query: ISearchQuery) -> list[SearchResult]:
         media_thumbnail = get_media_thumbnail_path(m.thumbnail_path, m.local_url)
         if media_thumbnail:
             post_thumbnails[m.post_id].append(media_thumbnail)
-    search_results: list[SearchResult] = []
+    results: list[SearchResult] = []
     for p in posts:
-        search_results.append(
+        results.append(
             SearchResult(
                 page="post",
                 id=p.id,
@@ -154,10 +175,11 @@ def search_posts(query: ISearchQuery) -> list[SearchResult]:
                 thumbnails=post_thumbnails[p.id] if p.id in post_thumbnails else None
             )
         )
-    return search_results
+    results = apply_search_results_transform(results, search_results_transform)
+    return results
 
 
-def search_media(query: ISearchQuery) -> list[SearchResult]:
+def search_media(query: ISearchQuery, search_results_transform: SearchResultTransform) -> list[SearchResult]:
     query_args: dict["str", Any] = {
         "limit": query.page_size,
         "offset": (query.page_number - 1) * query.page_size,
@@ -172,7 +194,7 @@ def search_media(query: ISearchQuery) -> list[SearchResult]:
         general_filter, general_args = json_logic_format_to_where_clause(query.advanced_filters, "post")
         where_clauses.append(general_filter)
         query_args.update(general_args)
-    results = db.execute_query(
+    rows = db.execute_query(
         f"""SELECT *
            FROM media
            {'WHERE ' + ' AND '.join(where_clauses) if len(where_clauses) else ''}
@@ -180,11 +202,11 @@ def search_media(query: ISearchQuery) -> list[SearchResult]:
            LIMIT %(limit)s OFFSET %(offset)s""",
         query_args
     )
-    media = [Media(**row) for row in results]
-    search_results: list[SearchResult] = []
+    media = [Media(**row) for row in rows]
+    results: list[SearchResult] = []
     for m in media:
         media_thumbnail = get_media_thumbnail_path(m.thumbnail_path, m.local_url)
-        search_results.append(
+        results.append(
             SearchResult(
                 page="media",
                 id=m.id,
@@ -193,18 +215,114 @@ def search_media(query: ISearchQuery) -> list[SearchResult]:
                 thumbnails=[media_thumbnail] if media_thumbnail else None
             )
         )
-    return search_results
+    results = apply_search_results_transform(results, search_results_transform)
+    return results
 
 
-ALLOWED_COLUMNS = {
-    "account": {"id", "url", "display_name", "bio", "notes", "data", "created_at", "updated_at"},
-    "post": {"id", "url", "caption", "notes", "publication_date", "data", "account_id", "created_at", "updated_at"},
-    "media": {"id", "url", "local_url", "annotation", "notes", "post_id", "media_type", "created_at", "updated_at"},
-    "archive_session": {"id", "external_id", "archived_url", "archiving_timestamp", "notes", "source_type", "created_at", "updated_at"},
+def sign_search_result_thumbnails(res: SearchResult, transform: SearchResultTransform) -> SearchResult:
+    if not res.thumbnails:
+        return res
+    for i in range(len(res.thumbnails)):
+        thumb: str = res.thumbnails[i]
+        if LOCAL_ARCHIVES_DIR_ALIAS in thumb:
+            local_path = thumb.replace(LOCAL_ARCHIVES_DIR_ALIAS, f"{transform.local_files_root}/archives", 1)
+        if LOCAL_THUMBNAILS_DIR_ALIAS in thumb:
+            local_path = thumb.replace(LOCAL_THUMBNAILS_DIR_ALIAS, f"{transform.local_files_root}/thumbnails", 1)
+        parsed = urlparse(local_path)
+        qs = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        qs['ft'] = generate_file_token(
+            transform.access_token,
+            local_path.split(f"{transform.local_files_root}")[-1]
+        )
+        new_query = urlencode(qs, doseq=True)
+        local_signed_url = str(urlunparse(parsed._replace(query=new_query)))
+        res.thumbnails[i] = local_signed_url
+    return res
+
+
+def apply_search_results_transform(
+        results: list[SearchResult],
+        transform: SearchResultTransform
+) -> list[SearchResult]:
+    if transform.access_token is not None:
+        results = [sign_search_result_thumbnails(s, transform) for s in results]
+    return results
+
+
+class SearchableColumn(BaseModel):
+    column_name: str
+    data_type: Literal["text", "number", "date"]
+
+
+# compact definition: tuples of (column_name, data_type) per table
+_ALLOWED_COLUMNS_RAW: dict[str, list[tuple[str, Literal["text", "number", "date"]]]] = {
+    "account": [
+        ("id", "number"),
+        ("create_date", "date"),
+        ("update_date", "date"),
+        ("id_on_platform", "text"),
+        ("url", "text"),
+        ("display_name", "text"),
+        ("bio", "text"),
+        ("data", "text"),
+        ("notes", "text"),
+        ("url_parts", "text"),
+    ],
+    "archive_session": [
+        ("id", "number"),
+        ("create_date", "date"),
+        ("update_date", "date"),
+        ("external_id", "text"),
+        ("archived_url", "text"),
+        ("archive_location", "text"),
+        ("summary_html", "text"),
+        ("parsed_content", "number"),
+        ("structures", "text"),
+        ("metadata", "text"),
+        ("extracted_entities", "number"),
+        ("archiving_timestamp", "date"),
+        ("notes", "text"),
+        ("extraction_error", "text"),
+        ("source_type", "number"),
+        ("attachments", "text"),
+        ("archived_url_parts", "text"),
+    ],
+    "post": [
+        ("id", "number"),
+        ("create_date", "date"),
+        ("update_date", "date"),
+        ("id_on_platform", "text"),
+        ("url", "text"),
+        ("account_id", "number"),
+        ("publication_date", "date"),
+        ("caption", "text"),
+        ("data", "text"),
+        ("notes", "text"),
+    ],
+    "media": [
+        ("id", "number"),
+        ("create_date", "date"),
+        ("update_date", "date"),
+        ("id_on_platform", "text"),
+        ("url", "text"),
+        ("post_id", "number"),
+        ("local_url", "text"),
+        ("media_type", "text"),
+        ("data", "text"),
+        ("notes", "text"),
+        ("annotation", "text"),
+        ("thumbnail_path", "text"),
+    ],
+}
+
+# instantiate SearchableColumn objects from the compact raw definition
+ALLOWED_COLUMNS: dict[str, dict[str, SearchableColumn]] = {
+    table: {name: SearchableColumn(column_name=name, data_type=data_type) for name, data_type in cols}
+    for table, cols in _ALLOWED_COLUMNS_RAW.items()
 }
 
 
-def sanitize_column(column: str, table: str) -> str:
+def sanitize_column(column: str, table: str) -> SearchableColumn:
     column = column.get("var") if isinstance(column, dict) and "var" in column else column
     if not isinstance(column, str):
         logger.warning(f"SQL injection attempt - column not a string: {type(column)} = {column}")
@@ -215,11 +333,11 @@ def sanitize_column(column: str, table: str) -> str:
         raise ValueError(f"Invalid column name: {column}")
     # Check against whitelist
     allowed = ALLOWED_COLUMNS.get(table, set())
-    if column not in allowed:
+    if not allowed or column not in allowed:
         logger.warning(f"SQL injection attempt - column '{column}' not in whitelist for table '{table}'")
         raise ValueError(f"Column '{column}' not allowed for table '{table}'")
     logger.debug(f"Column sanitization passed: {table}.{column}")
-    return column
+    return allowed[column]
 
 
 def json_logic_format_to_where_clause(json_logic: dict, table_name: str) -> tuple[str, dict]:
@@ -233,32 +351,40 @@ def json_logic_format_to_where_clause(json_logic: dict, table_name: str) -> tupl
         for op, val in logic_rec.items():
             if op == "==":
                 col, v = val
-                col = sanitize_column(col, table_rec)
+                col_def = sanitize_column(col, table_rec)
+                col = col_def.column_name
                 arg_key = f"{col}_eq"
                 args_rec[arg_key] = v
-                return f"`{col}` = %({arg_key})s"
+                if col_def.data_type == "date":
+                    return f"DATE(`{col}`) = DATE(%({arg_key})s)"
+                else:
+                    return f"`{col}` = %({arg_key})s"
             if op == "in":
                 v, col = val
-                col = sanitize_column(col, table_rec)
+                col_def = sanitize_column(col, table_rec)
+                col = col_def.column_name
                 arg_key = f"{col}_like"
                 args_rec[arg_key] = f'%{v}%'
                 return f"`{col}` LIKE %({arg_key})s"
             elif op == "!=":
                 col, v = val
-                col = sanitize_column(col, table_rec)
+                col_def = sanitize_column(col, table_rec)
+                col = col_def.column_name
                 arg_key = f"{col}_neq"
                 args_rec[arg_key] = v
                 return f"`{col}` != %({arg_key})s"
             elif op == ">":
                 if len(val) == 2:
                     col, v = val
-                    col = sanitize_column(col, table_rec)
+                    col_def = sanitize_column(col, table_rec)
+                    col = col_def.column_name
                     arg_key = f"{col}_gt"
                     args_rec[arg_key] = v
                     return f"`{col}` > %({arg_key})s"
                 elif len(val) == 3:
                     v1, col, v2 = val
-                    col = sanitize_column(col, table_rec)
+                    col_def = sanitize_column(col, table_rec)
+                    col = col_def.column_name
                     arg_key1 = f"{col}_gt"
                     arg_key2 = f"{col}_lt"
                     args_rec[arg_key1] = v1
@@ -267,13 +393,15 @@ def json_logic_format_to_where_clause(json_logic: dict, table_name: str) -> tupl
             elif op == "<":
                 if len(val) == 2:
                     col, v = val
-                    col = sanitize_column(col, table_rec)
+                    col_def = sanitize_column(col, table_rec)
+                    col = col_def.column_name
                     arg_key = f"{col}_lt"
                     args_rec[arg_key] = v
                     return f"`{col}` < %({arg_key})s"
                 elif len(val) == 3:
                     v1, col, v2 = val
-                    col = sanitize_column(col, table_rec)
+                    col_def = sanitize_column(col, table_rec)
+                    col = col_def.column_name
                     arg_key1 = f"{col}_gt"
                     arg_key2 = f"{col}_lt"
                     args_rec[arg_key1] = v1
@@ -282,13 +410,15 @@ def json_logic_format_to_where_clause(json_logic: dict, table_name: str) -> tupl
             elif op == "<=":
                 if len(val) == 2:
                     col, v = val
-                    col = sanitize_column(col, table_rec)
+                    col_def = sanitize_column(col, table_rec)
+                    col = col_def.column_name
                     arg_key = f"{col}_lte"
                     args_rec[arg_key] = v
                     return f"`{col}` <= %({arg_key})s"
                 elif len(val) == 3:
                     v1, col, v2 = val
-                    col = sanitize_column(col, table_rec)
+                    col_def = sanitize_column(col, table_rec)
+                    col = col_def.column_name
                     arg_key1 = f"{col}_gte"
                     arg_key2 = f"{col}_lte"
                     args_rec[arg_key1] = v1
@@ -297,13 +427,15 @@ def json_logic_format_to_where_clause(json_logic: dict, table_name: str) -> tupl
             elif op == ">=":
                 if len(val) == 2:
                     col, v = val
-                    col = sanitize_column(col, table_rec)
+                    col_def = sanitize_column(col, table_rec)
+                    col = col_def.column_name
                     arg_key = f"{col}_gte"
                     args_rec[arg_key] = v
                     return f"`{col}` >= %({arg_key})s"
                 elif len(val) == 3:
                     v1, col, v2 = val
-                    col = sanitize_column(col, table_rec)
+                    col_def = sanitize_column(col, table_rec)
+                    col = col_def.column_name
                     arg_key1 = f"{col}_gte"
                     arg_key2 = f"{col}_lte"
                     args_rec[arg_key1] = v1

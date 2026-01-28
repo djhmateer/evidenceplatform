@@ -9,14 +9,14 @@ from browsing_platform.server.services.annotation import Annotation
 from browsing_platform.server.services.enriched_entities import get_enriched_account_by_id
 from browsing_platform.server.services.media import get_media_by_id, annotate_media
 from browsing_platform.server.services.media_part import get_media_part_by_id, annotate_media_part
-from browsing_platform.server.services.permissions import get_auth_user
+from browsing_platform.server.services.permissions import auth_user_access
 from browsing_platform.server.services.post import get_post_by_id, annotate_post
 from extractors.entity_types import ExtractedEntitiesNested
 
 router = APIRouter(
     prefix="/annotate",
     tags=["annotate"],
-    dependencies=[Depends(get_auth_user)],
+    dependencies=[Depends(auth_user_access)],
     responses={404: {"description": "Not found"}},
 )
 
@@ -24,7 +24,7 @@ EntityType: TypeAlias = Literal["account", "post", "media", "media_part"]
 
 
 
-@router.post("/{entity:str}/{item_id:int}", dependencies=[Depends(get_auth_user)])
+@router.post("/{entity:str}/{item_id:int}", dependencies=[Depends(auth_user_access)])
 async def annotate_entity(entity: EntityType, item_id:int, annotation: Annotation) -> Any:
     if entity == "account":
         account = get_account_by_id(item_id)
@@ -51,7 +51,7 @@ async def annotate_entity(entity: EntityType, item_id:int, annotation: Annotatio
     return True
 
 
-@router.get("/{entity:str}/{item_id:int}", dependencies=[Depends(get_auth_user)])
+@router.get("/{entity:str}/{item_id:int}", dependencies=[Depends(auth_user_access)])
 async def get_account(entity: EntityType, item_id: int, req: Request) -> ExtractedEntitiesNested:
     account = get_enriched_account_by_id(item_id, extract_entities_transform_config(req))
     if not account:

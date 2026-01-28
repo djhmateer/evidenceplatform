@@ -6,8 +6,13 @@ from typing import Optional
 from fastapi import HTTPException
 from starlette.requests import Request
 
+from browsing_platform.server.services.entities_hierarchy import T_Entities
 from browsing_platform.server.services.event_logger import log_event
-from browsing_platform.server.services.token_manager import check_token
+from browsing_platform.server.services.sharing_manager import check_share_permissions, \
+    SharePermissions
+from browsing_platform.server.services.token_manager import check_token, TokenPermissions
+
+logger = logging.getLogger(__name__)
 
 logger = logging.getLogger(__name__)
 
@@ -22,38 +27,91 @@ def parse_token_from_header(auth_header: Optional[str]) -> Optional[str]:
     return parts[1] if parts[1] else None
 
 
-async def get_auth_user(request: Request):
-    # Bypass auth in dev mode (only when explicitly set to "1")
-    if os.getenv("BROWSING_PLATFORM_DEV") == "1":
-        logger.debug("Auth bypassed - dev mode enabled")
-        return True
-    """verify that user has a valid session"""
+def parse_token_from_header(auth_header: Optional[str]) -> Optional[str]:
+    """Safely parse token from Authorization header. Expected format: 'token:xxx'"""
+    if not auth_header:
+        return None
+    parts = auth_header.split(":", 1)
+    if len(parts) != 2 or parts[0] != "token":
+        return None
+    return parts[1] if parts[1] else None
+
+
+async def get_auth_permissions(request: Request):
     auth_header = request.headers.get("Authorization")
     token = parse_token_from_header(auth_header)
     if not token:
+        return None
+    return check_token(token)
+
+
+async def raise_auth_user_error(request: Request, token_permissions: Optional[TokenPermissions]):
+    if not token_permissions:
         body = await request.body()
         logger.warning(f"Unauthorized access - missing or invalid auth header: {request.scope['route'].path}")
         log_event("unauthorized_access", None,
                   request.scope['root_path'] + request.scope['route'].path,
                   json.dumps({"body": body.decode()}))
         raise HTTPException(status_code=401)
-    token_permissions = check_token(token)
-    if not token_permissions.valid:
+    elif not token_permissions.valid:
         body = await request.body()
         logger.warning(f"Unauthorized access - invalid token: {request.scope['route'].path}")
         log_event("unauthorized_access", None,
                   request.scope['root_path'] + request.scope['route'].path,
                   json.dumps({"body": body.decode()}))
         raise HTTPException(status_code=401)
-    logger.debug(f"Auth successful for user {token_permissions.user_id}: {request.scope['route'].path}")
-    return True
+    else:
+        logger.debug(f"Auth successful for user {token_permissions.user_id}: {request.scope['route'].path}")
+        return True
 
 
-async def get_user_id(request: Request):
+async def auth_user_access(request: Request):
+    # Bypass auth in dev mode (only when explicitly set to "1")
+    if os.getenv("BROWSING_PLATFORM_DEV") == "1":
+        logger.debug("Auth bypassed - dev mode enabled")
+        return True
+    """verify that user has a valid session"""
+    token_permissions = await get_auth_permissions(request)
+    return await raise_auth_user_error(request, token_permissions)
+
+
+async def get_share_permissions(request: Request) -> Optional[str]:
+    return request.headers.get("X-Share-Link")
+
+
+async def raise_share_access_error(request: Request, share_permissions: Optional[SharePermissions]):
+    if not share_permissions:
+        body = await request.body()
+        logger.warning(f"Unauthorized access - missing or invalid share token: {request.scope['route'].path}")
+        log_event("unauthorized_access", None,
+                  request.scope['root_path'] + request.scope['route'].path,
+                  json.dumps({"body": body.decode()}))
+        raise HTTPException(status_code=401)
+    elif not share_permissions.view:
+        body = await request.body()
+        logger.warning(f"Unauthorized access - share token does not grant view access: {request.scope['route'].path}")
+        log_event("unauthorized_access", None,
+                  request.scope['root_path'] + request.scope['route'].path,
+                  json.dumps({"body": body.decode()}))
+        raise HTTPException(status_code=401)
+    else:
+        logger.debug(f"Auth successful using share link: {request.scope['route'].path}")
+        return True
+
+
+async def auth_entity_view_access(request: Request, entity: T_Entities, entity_id: int):
+    token_permissions = await get_auth_permissions(request)
+    if not token_permissions or not token_permissions.valid:
+        share_permissions = await get_share_permissions(request)
+        entity_access = check_share_permissions(share_permissions, entity, entity_id)
+        return await raise_share_access_error(request, entity_access)
+    else:
+        return await raise_auth_user_error(request, token_permissions)
+
+
+def get_user_id(request: Request):
     auth_header = request.headers.get("Authorization")
     token = parse_token_from_header(auth_header)
-    if not token:
-        return None
     token_permissions = check_token(token)
     logger.debug(f"Retrieved user_id {token_permissions.user_id}")
     return token_permissions.user_id

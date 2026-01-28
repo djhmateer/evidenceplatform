@@ -1,5 +1,9 @@
+from typing import Literal
+
 from extractors.entity_types import ExtractedEntitiesFlattened, ExtractedEntitiesNested, AccountAndAssociatedEntities, \
     PostAndAssociatedEntities, MediaAndAssociatedEntities
+
+T_Entities = Literal["archiving_session", "account", "post", "media", "media_part"]
 
 
 def nest_entities(

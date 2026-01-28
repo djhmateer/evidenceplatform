@@ -7,6 +7,8 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 from pydantic import BaseModel
 
+from root_anchor import ROOT_DIR
+
 
 class Profile(BaseModel):
     name: str
@@ -14,7 +16,7 @@ class Profile(BaseModel):
 
 
 def register_instagram_account():
-    profiles_dir = Path("../profiles")
+    profiles_dir = Path(ROOT_DIR) / "profiles"
     profiles_dir.mkdir(exist_ok=True)
     map_path = profiles_dir / "map.json"
     profiles_map = []

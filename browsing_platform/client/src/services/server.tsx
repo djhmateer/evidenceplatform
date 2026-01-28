@@ -4,6 +4,7 @@ import PubSub from "pubsub-js";
 import events from "../lib/events";
 import cookie from "js-cookie";
 import {IPopupAlert} from "./alerts/alerts";
+import {getShareTokenFromHref} from "./linkSharing";
 
 const apiPath = 'api/';
 
@@ -32,7 +33,7 @@ export interface IErrorResponse {
     error: string
 }
 
-function get(path: string, options?: IRequestOptions) {
+const get = (path: string, options?: IRequestOptions) => {
     return post(path, {}, HTTP_METHODS.get, options)
 }
 
@@ -49,6 +50,10 @@ const post = async (
     const token: string | undefined = cookie.get("token");
     if (token) {
         headers.set("Authorization", "token:" + token)
+    }
+    const shareLink = getShareTokenFromHref();
+    if (shareLink) {
+        headers.set("X-Share-Link", shareLink);
     }
     const res = await fetch(config.serverPath + apiPath + path, {
         method: HTTP_METHODS[fixedMethod],

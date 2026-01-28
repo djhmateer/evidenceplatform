@@ -1,6 +1,6 @@
 import json
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional, Callable, TypeVar
 
@@ -255,7 +255,7 @@ def graphql_reels_media_to_entities(structure: ReelsMediaConnection) -> Extracte
                 url="https://www.instagram.com/p/" + media_id_to_shortcode(int(item.pk)),
                 account_id_on_platform=account.id_on_platform,
                 account_url=account.url,
-                publication_date=datetime.fromtimestamp(item.taken_at),
+                publication_date=datetime.fromtimestamp(item.taken_at, timezone.utc),
                 caption=item.caption.text if item.caption else None,
                 data=item.model_dump()
             )
@@ -336,7 +336,7 @@ def graphql_profile_timeline_to_entities(structure: ProfileTimelineGraphQL) -> E
             url="https://www.instagram.com/p/" + media_id_to_shortcode(int(item.pk)),
             account_id_on_platform=item.user.id,
             account_url=account.url,
-            publication_date=datetime.fromtimestamp(item.taken_at),
+            publication_date=datetime.fromtimestamp(item.taken_at, timezone.utc),
             caption=item.caption.text if item.caption else None,
             data=item.model_dump()
         )
@@ -539,7 +539,7 @@ def api_v1_media_info_to_entities(media_info: MediaInfoApiV1) -> ExtractedEntiti
             url="https://www.instagram.com/p/" + media_id_to_shortcode(int(item.pk)),
             account_id_on_platform=account.id_on_platform,
             account_url=account.url,
-            publication_date=datetime.fromtimestamp(item.taken_at),
+            publication_date=datetime.fromtimestamp(item.taken_at, timezone.utc),
             caption=item.caption.text if item.caption else None,
             data=item.model_dump()
         )
@@ -708,7 +708,7 @@ def page_posts_to_entities(structure: MediaShortcode) -> ExtractedEntitiesFlatte
             url="https://www.instagram.com/p/" + media_id_to_shortcode(int(item.pk)),
             account_id_on_platform=item.owner.id,
             account_url=account.url,
-            publication_date=datetime.fromtimestamp(item.taken_at),
+            publication_date=datetime.fromtimestamp(item.taken_at, timezone.utc),
             caption=item.caption.text if item.caption else None,
             data=item.model_dump()
         )
@@ -813,7 +813,7 @@ def page_highlight_reels_to_entities(structure: HighlightsReelConnection) -> Ext
             url="https://www.instagram.com/p/" + media_id_to_shortcode(int(reel.pk)),
             account_id_on_platform=highlight.user.id,
             account_url=account.url,
-            publication_date=datetime.fromtimestamp(reel.taken_at),
+            publication_date=datetime.fromtimestamp(reel.taken_at, timezone.utc),
             caption=reel.caption,
             data=reel.model_dump()
         )
@@ -913,7 +913,7 @@ def page_stories_to_entities(structure: StoriesFeed) -> ExtractedEntitiesFlatten
             url="https://www.instagram.com/p/" + media_id_to_shortcode(int(item.pk)),
             account_id_on_platform=reels_media.user.id,
             account_url=account.url,
-            publication_date=datetime.fromtimestamp(item.taken_at),
+            publication_date=datetime.fromtimestamp(item.taken_at, timezone.utc),
             caption=item.caption.text if item.caption else None,
             data=item.model_dump()
         )

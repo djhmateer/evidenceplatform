@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from browsing_platform.server.services.permissions import get_auth_user
+from browsing_platform.server.services.permissions import auth_user_access
 from browsing_platform.server.services.token_manager import check_token
 
 router = APIRouter(
     prefix="/permissions",
     tags=["permissions"],
-    dependencies=[Depends(get_auth_user)],
+    dependencies=[Depends(auth_user_access)],
     responses={404: {"description": "Not found"}},
 )
 

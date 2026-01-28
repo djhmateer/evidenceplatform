@@ -1,11 +1,13 @@
 from typing import Optional
+from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 
 from pydantic import BaseModel
 
 from browsing_platform.server.services.account import get_account_by_id
 from browsing_platform.server.services.archiving_session import ArchiveSessionWithEntities, get_archiving_session_by_id, \
-    ArchiveSession
+    ArchiveSession, censor_archiving_session, ArchivingSessionTransform, sign_archiving_session
 from browsing_platform.server.services.entities_hierarchy import nest_entities
+from browsing_platform.server.services.file_tokens import generate_file_token
 from browsing_platform.server.services.media import get_media_by_posts, get_media_by_id
 from browsing_platform.server.services.post import get_post_by_id, get_posts_by_accounts
 from browsing_platform.server.services.tag import get_tags_by_entity_ids
@@ -16,6 +18,7 @@ from utils import db
 
 class FlattenedEntitiesTransform(BaseModel):
     local_files_root: Optional[str] = None
+    access_token: Optional[str] = None
     retain_only_media_with_local_files: bool = False
     strip_raw_data: bool = True
 
@@ -32,7 +35,15 @@ def apply_flattened_entities_transform(
         for m in entities.media:
             if m.local_url is not None and m.local_url.strip() != "":
                 if m.local_url.startswith(f"{LOCAL_ARCHIVES_DIR_ALIAS}/"):
-                    m.local_url = m.local_url.replace(LOCAL_ARCHIVES_DIR_ALIAS, transform.local_files_root, 1)
+                    m.local_url = m.local_url.replace(LOCAL_ARCHIVES_DIR_ALIAS, f"{transform.local_files_root}/archives", 1)
+    if transform.access_token is not None:
+        for m in entities.media:
+            if m.local_url is not None and m.local_url.strip() != "":
+                parsed = urlparse(m.local_url)
+                qs = dict(parse_qsl(parsed.query, keep_blank_values=True))
+                qs['ft'] = generate_file_token(transform.access_token, m.local_url.split(f"{transform.local_files_root}")[-1])
+                new_query = urlencode(qs, doseq=True)
+                m.local_url = str(urlunparse(parsed._replace(query=new_query)))
     if transform.strip_raw_data:
         for a in entities.accounts:
             a.data = None
@@ -219,8 +230,20 @@ def get_enriched_archiving_session_by_id(
     )
 
 
+def apply_sessions_transform(
+        sessions: list[ArchiveSession],
+        transform: ArchivingSessionTransform
+) -> list[ArchiveSession]:
+    if transform.access_token is not None:
+        sessions = [sign_archiving_session(s, transform) for s in sessions]
+    if transform.properties_to_censor:
+        sessions = [censor_archiving_session(s, transform.properties_to_censor) for s in sessions]
+    return sessions
+
+
 def get_archiving_sessions_by_account_id(
         account_id: int,
+        transform: ArchivingSessionTransform
 ) -> list[ArchiveSession]:
     # fetching all sessions in which at least one post from the account was archived
     # additional sessions in which only the account was archived are not included,
@@ -243,11 +266,14 @@ def get_archiving_sessions_by_account_id(
         query_args,
         return_type="rows"
     )
-    return [ArchiveSession(**s) for s in session_rows]
+    sessions = [ArchiveSession(**s) for s in session_rows]
+    sessions = apply_sessions_transform(sessions, transform)
+    return sessions
 
 
 def get_archiving_sessions_by_post_id(
         post_id: int,
+        transform: ArchivingSessionTransform
 ) -> list[ArchiveSession]:
     post = get_post_by_id(post_id)
     if post is None:
@@ -261,11 +287,14 @@ def get_archiving_sessions_by_post_id(
         {"post_id": post_id},
         return_type="rows"
     )
-    return [ArchiveSession(**s) for s in session_rows]
+    sessions = [ArchiveSession(**s) for s in session_rows]
+    sessions = apply_sessions_transform(sessions, transform)
+    return sessions
 
 
 def get_archiving_sessions_by_media_id(
         media_id: int,
+        transform: ArchivingSessionTransform
 ) -> list[ArchiveSession]:
     media = db.execute_query(
         """SELECT * FROM media WHERE id = %(id)s""",
@@ -282,4 +311,7 @@ def get_archiving_sessions_by_media_id(
         {"media_id": media_id},
         return_type="rows"
     )
-    return [ArchiveSession(**s) for s in session_rows]
+    sessions = [ArchiveSession(**s) for s in session_rows]
+    sessions = apply_sessions_transform(sessions, transform)
+    return sessions
+

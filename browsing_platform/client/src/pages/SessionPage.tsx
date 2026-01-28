@@ -1,12 +1,15 @@
 import React from 'react';
 import withRouter, {IRouterProps} from "../services/withRouter";
-import {Box, CircularProgress, Divider, Stack,} from "@mui/material";
+import {Box, CircularProgress, Divider, Stack, Typography,} from "@mui/material";
 import {IArchiveSession, IExtractedEntitiesNested} from "../types/entities";
 import {fetchArchivingSession} from "../services/DataFetcher";
 import EntitiesViewer from "../UIComponents/Entities/EntitiesViewer";
 import TopNavBar from "../UIComponents/TopNavBar/TopNavBar";
 import ArchivingSessionsList from "../UIComponents/Entities/ArchivingSessionsList";
 import {EntityViewerConfig} from "../UIComponents/Entities/EntitiesViewerConfig";
+import cookie from "js-cookie";
+import LinkSharing from "../UIComponents/LinkSharing/LinkSharing";
+import {getShareTokenFromHref} from "../services/linkSharing";
 
 type IProps = {} & IRouterProps;
 
@@ -16,6 +19,8 @@ interface IState {
     loadingData: boolean;
     sessions: IArchiveSession[] | null;
     loadingSessions: boolean;
+    disableAnnotator: boolean;
+    hideHeader: boolean;
 }
 
 class SessionPage extends React.Component<IProps, IState> {
@@ -23,12 +28,15 @@ class SessionPage extends React.Component<IProps, IState> {
         super(props);
         const idArg = this.props.params.id;
         const id = idArg === undefined ? null : parseInt(idArg);
+        const shareMode = !!getShareTokenFromHref();
         this.state = {
             id,
             data: null,
             loadingData: id !== null,
             sessions: null,
             loadingSessions: false,
+            hideHeader: shareMode,
+            disableAnnotator: shareMode,
         }
     }
 
@@ -105,9 +113,34 @@ class SessionPage extends React.Component<IProps, IState> {
     }
 
     render() {
+        const entityId = this.state.id;
+        const isLoggedIn = !!(cookie.get("token"));
         return <div className={"page-wrap"}>
-            <TopNavBar>
-                Archive Session #{this.state.id}
+            <TopNavBar hideMenuButton={this.state.hideHeader}>
+                <Stack
+                    direction={"row"}
+                    alignItems={"center"} justifyContent={"space-between"}
+                    gap={1}
+                    sx={{width: '100%'}}
+                >
+                    <Stack direction={"row"} alignItems={"center"} gap={1}>
+                        <Typography>
+                            Archiving Session Data
+                        </Typography>
+                        {
+                            this.state.data ?
+                                <Typography>
+                                    Session #{this.state.id}
+                                </Typography> :
+                                <CircularProgress color={"primary"} size={"16"}/>
+                        }
+                    </Stack>
+                    {
+                        isLoggedIn && entityId ?
+                            <LinkSharing entityType={"archiving_session"} entityId={entityId}/> :
+                            null
+                    }
+                </Stack>
             </TopNavBar>
             <div className={"page-content content-wrap"}>
                 <Stack gap={2} sx={{width: '100%'}} divider={<Divider orientation="horizontal" flexItem/>}>

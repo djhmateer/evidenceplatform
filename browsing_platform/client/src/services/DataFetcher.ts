@@ -2,8 +2,10 @@ import {IArchiveSession, IArchiveSessionWithEntities, IExtractedEntitiesNested, 
 import server, {HTTP_METHODS} from "./server";
 import {Fields, JsonLogicFunction} from "@react-awesome-query-builder/mui";
 import {ITagWithType} from "../types/tags";
+import {getShareTokenFromHref} from "./linkSharing";
 
 interface FlattenedEntitiesTransform {
+    strip_raw_data?: boolean;
     local_files_root?: string | null;
     retain_only_media_with_local_files?: boolean;
 }
@@ -20,12 +22,19 @@ interface EntitiesTransformConfig {
 
 const entitiesTransformConfigToQueryParams = (config: EntitiesTransformConfig): string => {
     const params = new URLSearchParams();
+    const shareToken = getShareTokenFromHref()
+    if (shareToken){
+        params.append("st", shareToken);
+    }
     if (config.flattened_entities_transform) {
         if (config.flattened_entities_transform.local_files_root !== undefined) {
             params.append("lfr", config.flattened_entities_transform.local_files_root || "");
         }
         if (config.flattened_entities_transform.retain_only_media_with_local_files !== undefined) {
             params.append("mwf", String(config.flattened_entities_transform.retain_only_media_with_local_files));
+        }
+        if (config.flattened_entities_transform.strip_raw_data !== undefined) {
+            params.append("srd", config.flattened_entities_transform.strip_raw_data ? "1" : "0");
         }
     }
     if (config.nested_entities_transform) {
@@ -34,6 +43,20 @@ const entitiesTransformConfigToQueryParams = (config: EntitiesTransformConfig): 
         }
         if (config.nested_entities_transform.retain_only_accounts_with_posts !== undefined) {
             params.append("awp", String(config.nested_entities_transform.retain_only_accounts_with_posts));
+        }
+    }
+    return params.toString();
+}
+
+const sessionsTransformConfigToQueryParams = (config: EntitiesTransformConfig): string => {
+    const params = new URLSearchParams();
+    const shareToken = getShareTokenFromHref()
+    if (shareToken){
+        params.append("st", shareToken);
+    }
+    if (config.flattened_entities_transform) {
+        if (config.flattened_entities_transform.local_files_root !== undefined) {
+            params.append("lfr", config.flattened_entities_transform.local_files_root || "");
         }
     }
     return params.toString();
@@ -56,39 +79,39 @@ export const fetchArchivingSession = async (archivingSessionId: number, config: 
 }
 
 export const fetchAccountData = async (accountId: number): Promise<any> => {
-    return await server.get("account/data/" + accountId);
+    return await server.get(`account/data/${accountId}/`);
 }
 
 export const fetchPostData = async (postId: number): Promise<any> => {
-    return await server.get("post/data/" + postId);
+    return await server.get(`post/data/${postId}/`);
 }
 
 export const fetchMediaData = async (mediaId: number): Promise<any> => {
-    return await server.get("media/data/" + mediaId);
+    return await server.get(`media/data/${mediaId}/`);
 }
 
 export const fetchMediaParts = async (mediaId: number): Promise<IMediaPart[]> => {
-    return await server.get("media/parts/" + mediaId);
+    return await server.get(`media/parts/${mediaId}/`);
 }
 
 export const fetchArchivingSessionData = async (archivingSessionId: number): Promise<any> => {
-    return await server.get("archiving_session/data/" + archivingSessionId);
+    return await server.get(`archiving_session/data/${archivingSessionId}/`);
 }
 
-export const fetchArchivingSessionsAccount = async (accountId: number): Promise<IArchiveSession[]> => {
-    return await server.get("archiving_session/account/" + accountId);
+export const fetchArchivingSessionsAccount = async (accountId: number, config: EntitiesTransformConfig): Promise<IArchiveSession[]> => {
+    return await server.get(`archiving_session/account/${accountId}/?${sessionsTransformConfigToQueryParams(config)}`);
 }
 
-export const fetchArchivingSessionsPost = async (postId: number): Promise<IArchiveSession[]> => {
-    return await server.get("archiving_session/post/" + postId);
+export const fetchArchivingSessionsPost = async (postId: number, config: EntitiesTransformConfig): Promise<IArchiveSession[]> => {
+    return await server.get(`archiving_session/post/${postId}/?${sessionsTransformConfigToQueryParams(config)}`);
 }
 
-export const fetchArchivingSessionsMedia = async (mediaId: number): Promise<IArchiveSession[]> => {
-    return await server.get("archiving_session/media/" + mediaId);
+export const fetchArchivingSessionsMedia = async (mediaId: number, config: EntitiesTransformConfig): Promise<IArchiveSession[]> => {
+    return await server.get(`archiving_session/media/${mediaId}/?${sessionsTransformConfigToQueryParams(config)}`);
 }
 
 export const lookupTags = async (tagQuery: string): Promise<ITagWithType[]> => {
-    return await server.get("tags/?q=" + encodeURIComponent(tagQuery));
+    return await server.get(`tags/?q=` + encodeURIComponent(tagQuery));
 }
 
 export const SEARCH_MODES: readonly { key: string, label: string }[] = [
@@ -178,7 +201,7 @@ export const ADVANCED_FILTERS_CONFIG: { [key: T_Search_Mode]: Fields } = {
         },
     },
     'archive_sessions': {
-        archiving_date: {
+        archiving_timestamp: {
             label: 'Archiving Date',
             type: 'date',
         },

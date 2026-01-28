@@ -1,1 +1,0 @@
-# required for setuptools (installable package)

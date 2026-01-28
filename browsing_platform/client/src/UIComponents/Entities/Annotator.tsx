@@ -72,11 +72,11 @@ export default class EntityAnnotator extends React.Component <IProps, IState> {
         if (this.props.readonly) {
             return <Stack gap={1}>
                 <Typography variant={"h6"}>Notes</Typography>
-                <Typography variant={"body2"}>{notes || "No notes available."}</Typography>
+                <Typography variant={"body2"}>{notes || "-"}</Typography>
                 <Typography variant={"h6"}>Tags</Typography>
                 {
                     tags.length === 0
-                        ? <Typography variant={"body2"}>No tags available.</Typography>
+                        ? <Typography variant={"body2"}>-</Typography>
                         : <Stack direction={"row"} gap={1} flexWrap={"wrap"}>
                             {
                                 tags.map((tag, index) => <Typography variant={"body2"} key={index} sx={{
