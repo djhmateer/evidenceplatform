@@ -7,13 +7,25 @@
 - Node.js with `pnpm` package manager
 - MySQL database
 
-### Database Configuration
-The database connection is configured in the `.env` file in the project root.
+### Environment Configuration
 
-- Database Type: MySQL
-- Database Name: `evidenceplatform`
+The application requires a `.env` file in the project root. A sample configuration file is provided at `.env.sample`.
 
-Make sure your `.env` file contains the appropriate MySQL connection string.
+**First-time setup:**
+1. Copy the sample environment file:
+   ```bash
+   cp .env.sample .env
+   ```
+
+2. Generate a secure file token secret:
+   ```bash
+   python3 -c "import secrets; print(secrets.token_hex(32))"
+   ```
+   Copy the output and set it as `FILE_TOKEN_SECRET` in your `.env` file.
+
+3. Configure your MySQL database credentials in the `.env` file.
+
+**Important:** Never commit your `.env` file to version control. It contains sensitive secrets.
 
 ### Loading Data
 
@@ -63,3 +75,26 @@ pnpm start
 This starts the React development server on port **3000**.
 
 The frontend will be accessible at `http://localhost:3000` and will communicate with the API at `http://localhost:4444`.
+
+## Security Notes
+
+### Environment Files
+- The `.env` file is automatically ignored by git (see `.gitignore`)
+- Never commit secrets or credentials to version control
+- Use different secrets for development, staging, and production
+- Store production secrets in a secure vault system
+
+### Development Mode
+When `BROWSING_PLATFORM_DEV=1` is set:
+- ⚠️ **All authentication is bypassed**
+- Use only for local development
+- The application will refuse to start if dev mode is enabled with `ENVIRONMENT=production`
+
+### File Token Security
+The `FILE_TOKEN_SECRET` is used to encrypt file access tokens:
+- Each token is cryptographically bound to a specific file path
+- Tokens cannot be reused for different files
+- Changing this secret will invalidate all existing file tokens
+- Rotate this secret periodically as part of security best practices
+
+For a complete security review, see `SECURITY_REVIEW.md`.

@@ -1,3 +1,120 @@
+"""
+Archive Database Loader - Evidence Platform
+============================================
+
+PURPOSE:
+    Processes social media archives (HAR files) and loads their content into the database.
+    Handles registration, parsing, entity extraction, and thumbnail generation in a
+    fault-tolerant, resumable pipeline.
+
+HOW IT WORKS:
+    The loader operates in 4 sequential stages (A → B → C → D):
+
+    A) REGISTER - Scan archives directory and create database records
+       - Scans the 'archives/' folder for new archive directories
+       - Creates an archive_session record for each unregistered archive
+       - Archives are identified by directory name (e.g., eran_20250530_160037)
+       - Safe to run multiple times - only registers new archives
+
+    B) PARSE - Extract structures from HAR files
+       - Reads metadata.json for URL, timestamp, and notes
+       - Parses archive.har files to extract social media structures
+       - Identifies accounts, posts, photos, videos without downloading media
+       - Saves parsed structures as JSON in the database
+       - Records any errors in extraction_error field
+
+    C) EXTRACT - Convert structures to normalized database entities
+       - Deserializes parsed structures from Part B
+       - Converts HAR data to normalized account/post/media entities
+       - Inserts/updates entities in database tables
+       - Links entities to their source archive_session
+       - Tracks extraction with algorithm version numbers
+
+    D) THUMBNAILS - Generate preview images for media
+       - Creates thumbnails for images and video first frames
+       - Only generates for media with missing thumbnail_path
+       - Stores thumbnails in thumbnails/ directory
+       - Uses MD5 hash-based filenames for deduplication
+
+USAGE:
+    Run with a stage argument:
+        uv run db_loaders/archives_db_loader.py <stage>
+
+    Available stages:
+
+    • full           - Run all 4 parts (A → B → C → D) sequentially
+                      Use this for normal operation
+
+    • register       - Run only Part A (scan and register new archives)
+
+    • parse          - Run only Part B (parse HAR files for already-registered archives)
+
+    • extract        - Run only Part C (extract entities from already-parsed archives)
+
+    • add_attachments - Backfill session attachments (screenshots, recordings) for archives
+
+    • add_metadata   - Backfill archiving timestamps and URLs for archives
+
+    • clear_errors   - Clear extraction_error field to retry failed archives
+                      Use this after fixing issues that caused failures
+
+REGENERATING THUMBNAILS:
+    To regenerate ALL thumbnails (e.g., to change size or fix corrupted images):
+
+    1. Clear existing thumbnail paths in database:
+       UPDATE media SET thumbnail_path = NULL WHERE thumbnail_path IS NOT NULL;
+
+    2. Run the full pipeline or just Part D:
+       uv run db_loaders/archives_db_loader.py full
+       # or just:
+       python3 -c "import asyncio; from db_loaders.thumbnail_generator import generate_missing_thumbnails; asyncio.run(generate_missing_thumbnails())"
+
+    Note: Thumbnails are generated only for media where thumbnail_path IS NULL
+
+FAULT TOLERANCE:
+    - All stages are designed to be idempotent and resumable
+    - Errors are recorded in archive_session.extraction_error
+    - Failed archives are automatically skipped on subsequent runs
+    - Use 'clear_errors' stage to retry after fixing issues
+    - Algorithm versions track parsing/extraction changes
+
+LOGGING:
+    Logs are written to logs_db_loader/ directory:
+    - 1debug_db_loader.log - All messages (DEBUG and above)
+    - 5error_db_loader.log - Errors only
+    - Console output shows progress
+
+PERFORMANCE:
+    - Part B (parsing): ~1-5 seconds per archive
+    - Part C (extraction): ~2-10 seconds per archive
+    - Part D (thumbnails): ~0.5-2 seconds per media item
+    - Large batches: Run 'full' and let it process overnight
+    - Interrupted runs: Simply restart - will continue where it left off
+
+EXAMPLE WORKFLOWS:
+
+    # Initial load of all archives
+    uv run db_loaders/archives_db_loader.py full
+
+    # After adding new archives to the archives/ folder
+    uv run db_loaders/archives_db_loader.py full
+
+    # Retry failed archives after fixing issues
+    uv run db_loaders/archives_db_loader.py clear_errors
+    uv run db_loaders/archives_db_loader.py full
+
+    # Process only newly added archives (skip already-processed)
+    uv run db_loaders/archives_db_loader.py register
+    uv run db_loaders/archives_db_loader.py parse
+    uv run db_loaders/archives_db_loader.py extract
+
+DEPENDENCIES:
+    - MySQL database (configured in .env)
+    - archives/ directory with HAR archive folders
+    - PIL/Pillow for thumbnail generation
+    - ffmpeg for video thumbnail generation
+"""
+
 import asyncio
 import json
 import logging
