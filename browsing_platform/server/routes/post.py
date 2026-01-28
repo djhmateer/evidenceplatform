@@ -22,6 +22,7 @@ async def _auth_post_view(req: Request, item_id: int):
 
 
 @router.get("/data/{item_id}/", dependencies=[Depends(_auth_post_view)])
+@router.get("/data/{item_id}", dependencies=[Depends(_auth_post_view)])
 async def get_post_data(item_id:int) -> Any:
     post = get_post_by_id(item_id)
     if not post:
@@ -30,6 +31,7 @@ async def get_post_data(item_id:int) -> Any:
 
 
 @router.get("/{item_id}/", dependencies=[Depends(_auth_post_view)])
+@router.get("/{item_id}", dependencies=[Depends(_auth_post_view)])
 async def get_post(item_id:int, req: Request) -> ExtractedEntitiesNested:
     post = get_enriched_post_by_id(item_id, extract_entities_transform_config(req))
     if not post:

@@ -19,6 +19,7 @@ async def _auth_media_part_view(req: Request, item_id: int):
 
 
 @router.get("/{item_id}/", dependencies=[Depends(_auth_media_part_view)])
+@router.get("/{item_id}", dependencies=[Depends(_auth_media_part_view)])
 async def get_media_part(item_id:int) -> MediaPart:
     media_part = get_media_part_by_id(item_id)
     if not media_part:

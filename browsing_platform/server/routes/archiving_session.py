@@ -27,6 +27,7 @@ async def _auth_archiving_session_view(req: Request, item_id: int):
 
 
 @router.get("/data/{item_id}/", dependencies=[Depends(_auth_archiving_session_view)])
+@router.get("/data/{item_id}", dependencies=[Depends(_auth_archiving_session_view)])
 async def get_archiving_session_data(item_id:int) -> Any:
     session = get_archiving_session_by_id(item_id)
     if not session:
@@ -35,6 +36,7 @@ async def get_archiving_session_data(item_id:int) -> Any:
 
 
 @router.get("/{item_id}/", dependencies=[Depends(_auth_archiving_session_view)])
+@router.get("/{item_id}", dependencies=[Depends(_auth_archiving_session_view)])
 async def get_archiving_session(item_id:int, req: Request) -> ArchiveSessionWithEntities:
     session = get_enriched_archiving_session_by_id(item_id, extract_entities_transform_config(req))
     if not session:
@@ -43,18 +45,21 @@ async def get_archiving_session(item_id:int, req: Request) -> ArchiveSessionWith
 
 
 @router.get("/account/{item_id}/", dependencies=[Depends(_auth_account_view)])
+@router.get("/account/{item_id}", dependencies=[Depends(_auth_account_view)])
 async def get_archiving_sessions_for_account(item_id:int, req: Request) -> list[ArchiveSession]:
     sessions = get_archiving_sessions_by_account_id(item_id, extract_session_transform_config(req))
     return sessions
 
 
 @router.get("/post/{item_id}/", dependencies=[Depends(_auth_post_view)])
+@router.get("/post/{item_id}", dependencies=[Depends(_auth_post_view)])
 async def get_archiving_sessions_for_post(item_id:int, req: Request) -> list[ArchiveSession]:
     sessions = get_archiving_sessions_by_post_id(item_id, extract_session_transform_config(req))
     return sessions
 
 
 @router.get("/media/{item_id}/", dependencies=[Depends(_auth_media_view)])
+@router.get("/media/{item_id}", dependencies=[Depends(_auth_media_view)])
 async def get_archiving_sessions_for_media(item_id:int, req: Request) -> list[ArchiveSession]:
     sessions = get_archiving_sessions_by_media_id(item_id, extract_session_transform_config(req))
     return sessions

@@ -21,6 +21,7 @@ async def _auth_account_view(req: Request, item_id: int):
 
 
 @router.get("/data/{item_id:int}", dependencies=[Depends(_auth_account_view)])
+@router.get("/data/{item_id:int}/", dependencies=[Depends(_auth_account_view)])
 async def get_account_data(item_id:int) -> Any:
     account = get_account_by_id(item_id)
     if not account:
@@ -29,6 +30,7 @@ async def get_account_data(item_id:int) -> Any:
 
 
 @router.get("/{item_id}/", dependencies=[Depends(_auth_account_view)])
+@router.get("/{item_id}", dependencies=[Depends(_auth_account_view)])
 async def get_account(item_id:int, req: Request) -> ExtractedEntitiesNested:
     account = get_enriched_account_by_id(item_id, extract_entities_transform_config(req))
     if not account:

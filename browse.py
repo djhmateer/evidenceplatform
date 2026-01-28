@@ -46,6 +46,7 @@ from browsing_platform.server.routes import account, post, media, media_part, ar
     permissions, tags, annotate, share
 from browsing_platform.server.services.sharing_manager import get_link_permissions
 from browsing_platform.server.services.token_manager import check_token
+from browsing_platform.server.services.file_tokens import decrypt_file_token, FileTokenError
 app = FastAPI()
 
 # CORS configuration

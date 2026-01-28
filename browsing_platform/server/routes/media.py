@@ -22,6 +22,7 @@ async def _auth_media_view(req: Request, item_id: int):
 
 
 @router.get("/data/{item_id}/", dependencies=[Depends(_auth_media_view)])
+@router.get("/data/{item_id}", dependencies=[Depends(_auth_media_view)])
 async def get_media_data(item_id:int) -> Any:
     media = get_media_by_id(item_id)
     if not media:
@@ -30,6 +31,7 @@ async def get_media_data(item_id:int) -> Any:
 
 
 @router.get("/parts/{item_id}/", dependencies=[Depends(_auth_media_view)])
+@router.get("/parts/{item_id}", dependencies=[Depends(_auth_media_view)])
 async def get_media_parts(item_id:int) -> Any:
     media = get_media_by_id(item_id)
     if not media:
@@ -38,6 +40,7 @@ async def get_media_parts(item_id:int) -> Any:
 
 
 @router.get("/{item_id}/", dependencies=[Depends(_auth_media_view)])
+@router.get("/{item_id}", dependencies=[Depends(_auth_media_view)])
 async def get_media(item_id:int, req: Request) -> ExtractedEntitiesNested:
     media = get_enriched_media_by_id(item_id, extract_entities_transform_config(req))
     if not media:

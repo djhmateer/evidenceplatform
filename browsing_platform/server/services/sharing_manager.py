@@ -80,7 +80,7 @@ def get_existing_share_link(entity: T_Entities, entity_id: int) -> Optional[Enti
         WHERE entity = %(entity)s AND entity_id = %(entity_id)s AND valid = TRUE'''
         , {"entity": entity, "entity_id": entity_id}, "single_row"
     )
-    if link_share is None:
+    if not link_share or not isinstance(link_share, dict):
         return None
     else:
         return EntityShareLink(**link_share)
@@ -95,7 +95,7 @@ def get_link_permissions(link_suffix: str) -> EntitySharePermissions:
             WHERE link_suffix = %(token)s'''
             , {"token": link_suffix}, "single_row"
         )
-        if token_check is None:
+        if not token_check or not isinstance(token_check, dict):
             return EntitySharePermissions(view=False)
         else:
             share_link = EntityShareLink(**token_check)
