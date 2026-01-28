@@ -1,6 +1,9 @@
+import logging
 from typing import Literal, Optional, Any
 
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 from browsing_platform.server.services.archiving_session import ArchiveSession
 from browsing_platform.server.services.media import get_media_by_posts, get_media_thumbnail_path
@@ -193,9 +196,29 @@ def search_media(query: ISearchQuery) -> list[SearchResult]:
     return search_results
 
 
+ALLOWED_COLUMNS = {
+    "account": {"id", "url", "display_name", "bio", "notes", "data", "created_at", "updated_at"},
+    "post": {"id", "url", "caption", "notes", "publication_date", "data", "account_id", "created_at", "updated_at"},
+    "media": {"id", "url", "local_url", "annotation", "notes", "post_id", "media_type", "created_at", "updated_at"},
+    "archive_session": {"id", "external_id", "archived_url", "archiving_timestamp", "notes", "source_type", "created_at", "updated_at"},
+}
+
+
 def sanitize_column(column: str, table: str) -> str:
     column = column.get("var") if isinstance(column, dict) and "var" in column else column
-    # TODO: Implement proper sanitization based on allowed columns
+    if not isinstance(column, str):
+        logger.warning(f"SQL injection attempt - column not a string: {type(column)} = {column}")
+        raise ValueError(f"Column must be a string, got {type(column)}")
+    # Only allow alphanumeric and underscore
+    if not column.replace("_", "").isalnum():
+        logger.warning(f"SQL injection attempt - invalid characters in column: {column}")
+        raise ValueError(f"Invalid column name: {column}")
+    # Check against whitelist
+    allowed = ALLOWED_COLUMNS.get(table, set())
+    if column not in allowed:
+        logger.warning(f"SQL injection attempt - column '{column}' not in whitelist for table '{table}'")
+        raise ValueError(f"Column '{column}' not allowed for table '{table}'")
+    logger.debug(f"Column sanitization passed: {table}.{column}")
     return column
 
 

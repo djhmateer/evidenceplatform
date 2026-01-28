@@ -38,24 +38,34 @@ def auto_complete_tags(query: str) -> list[ITagWithType]:
     return [ITagWithType(**row) for row in matching_rows]
 
 
+ENTITY_TAG_TABLES = {
+    'account': ('account_tag', 'account_id'),
+    'post': ('post_tag', 'post_id'),
+    'media': ('media_tag', 'media_id'),
+    'media_part': ('media_part_tag', 'media_part_id'),
+    'archive_session': ('archive_session_tag', 'archive_session_id'),
+}
+
+
 def get_tags_by_entity_ids(entity:str , ids: list[int]) -> dict[int, list[ITagWithType]]:
     if not ids or len(ids) == 0:
         return {}
-    if entity not in ['account', 'post', 'media', 'media_part', 'archive_session']:
-        raise Exception("unsupported entity for tag retrieval")
+    if entity not in ENTITY_TAG_TABLES:
+        raise ValueError(f"Unsupported entity for tag retrieval: {entity}")
+    table_name, id_column = ENTITY_TAG_TABLES[entity]
     query_args = {f"id_{i}": f"{id_}" for i, id_ in enumerate(ids)}
     query_in_clause = ', '.join([f"%(id_{i})s" for i in range(len(ids))])
     tag_rows = db.execute_query(
-        f"""SELECT 
+        f"""SELECT
                 t.*,
-                te.{entity}_id AS entity_id,
+                te.{id_column} AS entity_id,
                 tag_type.name AS tag_type_name,
                 tag_type.description AS tag_type_description,
                 tag_type.notes AS tag_type_notes
-            FROM {entity}_tag AS te
+            FROM {table_name} AS te
             LEFT JOIN tag AS t ON te.tag_id = t.id
             LEFT JOIN tag_type ON t.tag_type_id = tag_type.id
-            WHERE te.{entity}_id IN ({query_in_clause})""",
+            WHERE te.{id_column} IN ({query_in_clause})""",
         query_args,
         return_type="rows"
     )

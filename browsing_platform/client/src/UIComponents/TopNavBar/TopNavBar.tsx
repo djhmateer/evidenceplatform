@@ -62,7 +62,7 @@ class TopNavBar extends React.Component<IProps, IState> {
     }
 
     logout() {
-        server.get('login/logout/', {})
+        server.post('login/logout', {})
             .then(() => {
                 const cookies = cookie.get();
                 Object.keys(cookies).forEach((cookieName) => {

@@ -1,0 +1,273 @@
+#!/bin/bash
+
+# File to build evidenceplatform.org webserver
+
+# Track start time
+start_time=$(date +%s)
+
+# For dev purposes only
+# cd ..
+# git add .
+# git commit -m "auto"
+# git push
+# cd infra
+
+set -x
+
+image=Ubuntu2404 
+
+# Generate a random suffix between 1 and 1000
+int=$(shuf -i 1-1000 -n 1)
+
+# If we are using passwords in the vm create below (default is to use SSH keys)
+# Password must have the 3 of the following: 1 lower case character, 1 upper case character, 1 number and 1 special character
+# generate a 34 character password (normal, capitals and numbers)
+password=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c34)
+
+rgprefix=evidencePlatformWebsite
+rg=${rgprefix}${int}
+
+# Don't put capitals in dns name below and it needs to be unique (ie not used in azure at the moment)
+dnsname=evidenceplatformweb${int}
+
+# adminusername=dave
+# adminpassword=${password}
+
+region=westeurope
+vmname=${dnsname}vm
+vnet=vnet${int}
+subnet=subnet${int}
+publicIPName=publicIP${int}
+nsgname=nsg${int}
+nicName=nic${int}
+
+
+# resource group
+az group create \
+   --name ${rg} \
+   --location ${region}
+
+# virtual network
+az network vnet create \
+    --resource-group ${rg} \
+    --name ${vnet} \
+    --subnet-name ${subnet}
+
+# nework security group
+az network nsg create \
+    --resource-group ${rg} \
+    --name ${nsgname}
+
+# public IP and associate with the given DNS name
+# Basic or Standard for the ip-sku
+az network public-ip create \
+    --resource-group ${rg} \
+    --name ${publicIPName} \
+    --sku Standard \
+    --zone 1 \
+    --dns-name ${dnsname}
+
+# nic and associate with vnet, publicip
+az network nic create \
+    --resource-group ${rg} \
+    --name ${nicName} \
+    --vnet-name ${vnet} \
+    --subnet ${subnet} \
+    --public-ip-address ${publicIPName} \
+    --network-security-group ${nsgname}
+
+az disk create \
+  --resource-group ${rg} \
+  --name ${vmname}-data1 \
+  --size-gb 1024 \ 
+  --location ${region} \
+  --sku Standard_LRS 
+
+#   Standard_LRS - HDD
+#   StardardSSD_LRS - Standard SSD
+#   Premium_LRS - Premium SSD (default)
+
+
+# Create vm which runs the cloud init script to provision 
+# 128GB disk - 40% used
+# B4ms took just over 3 hours to build.
+
+# If one of my keys exist 
+# uncomment line below to get ssh keys working
+# I'm actually using the default ~/.ssh/id_rsa_azure.pub key
+filename="../secrets/sshkey-rgb.pub"
+if [ -f "$filename" ]; then
+az vm create \
+    --resource-group ${rg} \
+    --name ${vmname} \
+    --location ${region} \
+    --nics ${nicName} \
+    --image ${image} \
+    --ssh-key-values @~/.ssh/id_rsa_azure.pub ../secrets/yaniv_glan.pub \
+    --size Standard_B2ms \
+    --os-disk-size-gb 128 \
+    --attach-data-disks ${vmname}-data1
+else
+ echo "ping"
+# az vm create \
+#     --resource-group ${rg} \
+#     --name ${vmname} \
+#     --location ${region} \
+#     --nics ${nicName} \
+#     --image ${image} \
+#     --custom-data create_webserver.sh \
+#     --admin-username ${adminusername} \
+#     --admin-password ${adminpassword} \
+#     --size Standard_B1s 
+
+    # --size Standard_B1LS  # £2.82
+    # --size Standard_B1s # £6.5pm (1GB and 1CPU)
+    # --size Standard_B1ms # £13 (2GB and 1CPU)
+    # --size Standard_B2s # £26.63 (4GB)
+    # --size Standard_B2ms # £45 (8GB)
+    # B4ms - (16GB)
+    # B8ms - (32GB)
+fi
+
+
+# allow port 22 ssh (so that scp will work below)
+az network nsg rule create \
+    --resource-group ${rg} \
+    --nsg-name ${nsgname} \
+    --name nsgGroupRuleSSH22 \
+    --protocol tcp \
+    --priority 998 \
+    --destination-port-range 22 \
+    --access allow
+
+
+cd .. # so now will be in project root ie /home/dave/code/evidenceplatform
+
+# DM ONLY DO WHEN I NEED TO go through archives folders making sure any sanitized.har files are removed
+find /home/dave/code/evidenceplatform/archives -name "sanitized.har" -type f -delete
+
+# dump current local database that has been processed using
+# uv run python db_loaders/archives_db_loader.py full
+
+# DM UNCOMMENT THE NEXT 2 LINES TO REBACKUP THE LOCAL DATABASE
+rm /home/dave/code/evidenceplatform/secrets/evidenceplatform.sql.gz
+mysqldump -u charlie -ppassword evidenceplatform | gzip > /home/dave/code/evidenceplatform/secrets/evidenceplatform.sql.gz
+
+# DM UNCOMMENT THE 2 NEXT LINES to REUPDATE the ALL.zip
+rm -f all.zip
+zip -r all.zip . -x "*/node_modules/*" "node_modules/*" "*/.venv/*" ".venv/*" "*/__pycache__/*" "*/dist/*" "dist/*" "*/.git/*" ".git/*" "*/.vscode/*" ".vscode/*" \
+ "*.claude*" "*.env.development*" "*logs/*" "*logs_db_loader/*" "*archives/*" "*/sanitized.har" > /dev/null
+
+# copy all.zip to the new VM
+# I have seen this first scp timeout so retry until it works
+n=0
+until [ "$n" -ge 5 ]
+do
+   scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null all.zip dave@${dnsname}.westeurope.cloudapp.azure.com:/home/dave/ && break
+   n=$((n+1)) 
+   sleep 15
+done
+
+# rm -f all.zip # remove zip file 
+
+# even though this is there already, I need to do the unzip of all.zip which create_websever.sh does, so lets just copy it
+scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null secrets/create_webserver.sh dave@${dnsname}.westeurope.cloudapp.azure.com:/home/dave/ 
+
+# Run create_webserver.sh script on the remote machine
+# this is great as you can see the output of the script
+# this will call the unzip of all.zip
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null dave@${dnsname}.westeurope.cloudapp.azure.com 'sed -i "s/\r$//" create_webserver.sh && chmod +x create_webserver.sh && /home/dave/create_webserver.sh'
+
+
+# NOW I USE Azure Blob Storage
+# copy up sample data from archives folder. notice order of arguments -r must be first
+# archives_start=$(date +%s)
+# scp -r -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null archives/. dave@${dnsname}.westeurope.cloudapp.azure.com:/home/dave/archives/
+# archives_end=$(date +%s)
+# archives_elapsed=$((archives_end - archives_start))
+# archives_min=$((archives_elapsed / 60))
+# archives_sec=$((archives_elapsed % 60))
+# echo -e "\n✓ Archives copy completed in ${archives_min}m ${archives_sec}s"
+
+# run import_data
+# ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null dave@${dnsname}.westeurope.cloudapp.azure.com 'ENVIRONMENT=production DB_USER=golf DB_PASS=password5 DB_NAME=evidenceplatform DB_PORT=3306 DB_HOST=localhost DEFAULT_SIGNATURE=your_prod_signature BROWSING_PLATFORM_DEV=0 /home/dave/.local/bin/uv run python /home/dave/db_loaders/archives_db_loader.py full'
+
+
+# delete old resource groups
+groupstodel=$(az group list --query "[?contains(name, '${rgprefix}')]".name --output tsv)
+
+for rgtodel in $groupstodel
+do
+    if [ "$rgtodel" = "$rg" ]; then  
+    echo "not deleting $rgtodel as have just created it"
+    else
+    # echo "dont delete for now"
+	az group delete \
+            --name $rgtodel \
+            --no-wait \
+            --yes
+    fi
+done
+
+# allow port 80
+az network nsg rule create \
+    --resource-group ${rg} \
+    --nsg-name ${nsgname} \
+    --name nsgGroupRuleWeb80 \
+    --protocol tcp \
+    --priority 1001 \
+    --destination-port-range 80 \
+    --access allow
+
+# allow port 443
+az network nsg rule create \
+    --resource-group ${rg} \
+    --nsg-name ${nsgname} \
+    --name nsgGroupRuleWeb443 \
+    --protocol tcp \
+    --priority 1002 \
+    --destination-port-range 443 \
+    --access allow
+
+# generate dns here.. had trouble doing inside next if statement
+generate_post_data()
+{
+  cat <<EOF
+{
+  "content": "${dnsname}.westeurope.cloudapp.azure.com",
+  "ttl": 60
+}
+EOF
+}
+
+# patch DNS through to the new VM only if the token file exist
+filename=secrets/dnsimpletoken.txt
+if [ -f "$filename" ]; then
+    echo "dnsimpletoken.txt file found"
+
+    # get the first and only line
+    token=$(head -n 1 $filename)
+    # echo "token is $token"
+
+    # update DNS
+    curl https://api.dnsimple.com/v2/63829/zones/evidenceplatform.org/records/70831671 -H "Authorization: Bearer ${token}" -H "Accept: application/json" -H "Content-Type: application/json" -X PATCH -d "$(generate_post_data)" 
+
+    curl https://api.dnsimple.com/v2/63829/zones/evidenceplatform.org/records/70831674 -H "Authorization: Bearer ${token}" -H "Accept: application/json" -H "Content-Type: application/json" -X PATCH -d "$(generate_post_data)" 
+fi
+
+
+cd infra 
+
+echo -e "\nssh -o StrictHostKeyChecking=no dave@${dnsname}.westeurope.cloudapp.azure.com\n" > sshCurrentVm.sh
+
+chmod +x sshCurrentVm.sh
+
+# echo -e "password is ${adminpassword}" > password.txt
+# echo -e "http://${dnsname}.westeurope.cloudapp.azure.com"
+
+# Calculate and display elapsed time
+end_time=$(date +%s)
+elapsed=$((end_time - start_time))
+minutes=$((elapsed / 60))
+seconds=$((elapsed % 60))
+echo -e "\n✓ Deployment completed in ${minutes}m ${seconds}s"

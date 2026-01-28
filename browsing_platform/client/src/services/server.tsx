@@ -126,10 +126,14 @@ export const anchor_local_static_files = (path?: string) => {
     if (path === undefined || path === null) {
         return null;
     }
+    const baseUrl = config.serverPath.replace(/\/$/, '');
     if (path && path.startsWith("local_archive_har")) {
-        path = path.replace("local_archive_har", "http://127.0.0.1:4444/archives");
+        // todo test on dev with pnpm start ie not a prod build.
+        //  path = path.replace("local_archive_har", "http://127.0.0.1:4444/archives");
+        path = path.replace("local_archive_har", `${baseUrl}/archives`);
     } else if (path && path.startsWith("local_thumbnails")) {
-        path = path.replace("local_thumbnails", "http://127.0.0.1:4444/thumbnails");
+        //  path = path.replace("local_thumbnails", "http://127.0.0.1:4444/thumbnails");
+        path = path.replace("local_thumbnails", `${baseUrl}/thumbnails`);
     }
     const token = cookie.get("token");
     if (token) {

@@ -70,8 +70,12 @@ class Login extends React.Component<IProps, IState> {
     proceedToSite = () => {
         if (this.state.redirect) {
             try {
-                this.props.navigate(decodeURIComponent(this.state.redirect));
-                return;
+                const decoded = decodeURIComponent(this.state.redirect);
+                // Only allow relative paths to prevent open redirect attacks
+                if (decoded.startsWith('/') && !decoded.startsWith('//')) {
+                    this.props.navigate(decoded);
+                    return;
+                }
             } catch (e) {
                 console.log(e);
             }
