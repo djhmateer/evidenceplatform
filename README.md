@@ -76,6 +76,112 @@ This starts the React development server on port **3000**.
 
 The frontend will be accessible at `http://localhost:3000` and will communicate with the API at `http://localhost:4444`.
 
+---
+
+## Production Deployment
+
+### Backup Production Data
+
+#### 1. Backup Database
+```bash
+# On production server
+# 10mins
+mysqldump -u golf -pSEESECRETSBUILDWEBSERVER evidenceplatform > evidenceplatform_backup_$(date +%Y%m%d_%H%M%S).sql
+```
+
+#### 2. Backup Files and Archives
+```bash
+# On production server
+# Excludes SQL dumps from the archive backup and raw images
+
+# only takes 5 mins or so
+tar \
+  --exclude='evidenceplatform.sql' \
+  --exclude='__pycache__' \
+  --exclude='*/__pycache__/*' \
+  --exclude='archives' \
+  --exclude='archives/*' \
+  -cf - . \
+| pv -s $(du -sb . | awk '{print $1}') \
+| zstd -o backup.tar.zst
+```
+
+
+### Production Frontend Configuration
+
+**IMPORTANT:** The frontend API endpoint is baked into the build at compile time.
+
+**REQUIRED:** You must have a `.env.production` file in the `browsing_platform/client` directory before running `pnpm build`. Without this file, the build will use incorrect defaults.
+
+Before building for production, configure the API endpoint:
+
+```bash
+cd browsing_platform/client
+```
+
+Edit `.env.production` to set your production domain:
+```bash
+REACT_APP_SERVER_ENDPOINT=https://your-production-domain.com/
+GENERATE_SOURCEMAP=false
+```
+
+**Common mistake:** If you deployed and the frontend shows "Failed to fetch" or "ERR_CONNECTION_REFUSED", it means the frontend was built with the wrong API endpoint (likely `localhost:4444`). Rebuild with the correct production URL.
+
+### Deploying Updates
+
+#### 1. Pull Latest Code
+```bash
+git pull origin main
+```
+
+#### 2. Update Dependencies
+
+**Backend:**
+```bash
+uv sync --upgrade
+```
+
+**Frontend:**
+```bash
+cd browsing_platform/client
+
+# Install dependencies
+pnpm install
+
+# CRITICAL: Verify .env.production has the correct API endpoint
+cat .env.production
+# Should show: REACT_APP_SERVER_ENDPOINT=https://your-production-domain.com/
+
+# Build for production (uses .env.production automatically)
+pnpm build
+
+cd ../..
+```
+
+#### 3. Apply Database Migrations
+
+TODO - make migrations
+
+```bash
+# If there are any schema changes, apply them here
+# Example:
+# mysql -u YOUR_DB_USER -pYOUR_DB_PASS evidenceplatform < migrations/001_add_new_table.sql
+```
+
+#### 4. Restart Services
+```bash
+# Stop the application (adjust based on your process manager)
+# Example with systemd:
+sudo systemctl stop evidenceplatform
+
+# Or if using a process manager like PM2:
+# pm2 stop evidenceplatform
+
+# Restart the application
+sudo systemctl start evidenceplatform
+# Or: pm2 start evidenceplatform
+```
+
 ## Security Notes
 
 ### Environment Files
@@ -97,4 +203,3 @@ The `FILE_TOKEN_SECRET` is used to encrypt file access tokens:
 - Changing this secret will invalidate all existing file tokens
 - Rotate this secret periodically as part of security best practices
 
-For a complete security review, see `SECURITY_REVIEW.md`.

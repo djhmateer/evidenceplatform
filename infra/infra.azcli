@@ -149,6 +149,8 @@ find /home/dave/code/evidenceplatform/archives -name "sanitized.har" -type f -de
 # dump current local database that has been processed using
 # uv run python db_loaders/archives_db_loader.py full
 
+# DM TODO - I want git really on the prod machine so can do updates.
+# so maybe just don't exclude .git here.
 # DM UNCOMMENT THE NEXT 2 LINES TO REBACKUP THE LOCAL DATABASE
 rm /home/dave/code/evidenceplatform/secrets/evidenceplatform.sql.gz
 mysqldump -u charlie -ppassword evidenceplatform | gzip > /home/dave/code/evidenceplatform/secrets/evidenceplatform.sql.gz
