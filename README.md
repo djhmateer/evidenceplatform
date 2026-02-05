@@ -52,7 +52,13 @@ uv run db_loaders/archives_db_loader.py full
 # took 6 hours to do the FTK run on dev
 uv run db_loaders/archives_db_loader.py full --archives-dir /mnt/u/archives
 
-ii
+# on prod takes 24mins with 32GB RAM
+uv run db_loaders/archives_db_loader.py full --limit 100
+
+# keep going if ssh disconnects
+nohup uv run db_loaders/archives_db_loader.py full &
+
+
 
 ```
 
