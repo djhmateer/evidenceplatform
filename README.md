@@ -31,9 +31,26 @@ The application requires a `.env` file in the project root. A sample configurati
 
 The loader expects data to be in the `archives` folder, organized in timestamped folders (e.g., `era_20250505_170837`) containing HAR files and other data files. 482GB currently on 20th Jan 26.
 
+On 4th Feb I have extracted files from FTK
+
+use (see in secrets directory)
+```bash
+rclone copy gdrive-personal: \
+  --drive-root-folder-id foo-foo \
+  /mnt/e/ftk \
+  -P
+```
+
+Use Dbeaver or something to do a database dump just in case (on dev first)
+
 To load new data into the database:
 ```bash
+# this expects data to be in archives folder eg folders like eran_2025_1234
 uv run db_loaders/archives_db_loader.py full
+
+# to read from a separate drive - careful to have archives in the remote folder.
+# took 6 hours to do the FTK run on dev
+uv run db_loaders/archives_db_loader.py full --archives-dir /mnt/f/archives
 ```
 
 This script processes archives in 4 stages:

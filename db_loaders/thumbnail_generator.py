@@ -1,3 +1,56 @@
+"""
+Thumbnail Generator - Evidence Platform
+========================================
+
+PURPOSE:
+    Generates preview thumbnails for media items (images and videos) stored in the database.
+    This is Part D of the archive loading pipeline in archives_db_loader.py.
+
+HOW IT WORKS:
+    1. Queries the database for media records where thumbnail_path IS NULL
+    2. For each media item:
+       - Images: Opens with PIL and resizes
+       - Videos: Extracts first frame using OpenCV, falls back to later frames if needed
+    3. Saves thumbnail as JPEG in thumbnails/ directory
+    4. Updates the media record with the thumbnail path
+
+THUMBNAIL NAMING:
+    Thumbnails are named using MD5 hash: {md5(id_on_platform + size)}.jpg
+    This provides deduplication - same media won't generate duplicate thumbnails.
+
+STORAGE:
+    - Thumbnails are stored in: {ROOT_DIR}/thumbnails/
+    - Database stores relative path: local_thumbnails/{filename}.jpg
+    - Default size: 128x128 pixels
+
+ERROR HANDLING:
+    - Failed thumbnails store "error: {message}" in thumbnail_path field
+    - This prevents infinite retry loops on broken media
+    - To retry failed thumbnails, clear the error:
+      UPDATE media SET thumbnail_path = NULL WHERE thumbnail_path LIKE 'error:%';
+
+VIDEO FRAME EXTRACTION:
+    - Uses OpenCV (cv2) to read video files
+    - Validates file size and metadata to detect truncated/corrupt files
+    - Tries frames 0, 1, 10, 30 if earlier frames fail
+    - 10 second timeout per video to prevent hangs
+
+USAGE:
+    Usually called as Part D of the full pipeline:
+        uv run db_loaders/archives_db_loader.py full
+
+    Can also be run standalone:
+        python -c "import asyncio; from db_loaders.thumbnail_generator import generate_missing_thumbnails; asyncio.run(generate_missing_thumbnails())"
+
+    With limit (process only N thumbnails):
+        asyncio.run(generate_missing_thumbnails(limit=10))
+
+DEPENDENCIES:
+    - PIL/Pillow for image processing
+    - OpenCV (cv2) for video frame extraction
+    - MySQL database with media table
+"""
+
 import asyncio
 import logging
 import os
@@ -105,7 +158,8 @@ def _read_video_frame(path: str) -> Image.Image:
         cap.release()
 
 
-async def generate_missing_thumbnails(thumbnail_size=(128, 128)):
+async def generate_missing_thumbnails(thumbnail_size=(128, 128), limit: int | None = None):
+    generated_count = 0
     while True:
         media = db.execute_query(
             """SELECT *
@@ -157,6 +211,10 @@ async def generate_missing_thumbnails(thumbnail_size=(128, 128)):
             "thumbnail_path": relative_thumbnail_path,
             "id": media.id
         }, "none")
+        generated_count += 1
+        if limit is not None and generated_count >= limit:
+            logger.info(f"Part D - Reached limit of {limit} thumbnails")
+            break
 
 
 if __name__ == "__main__":

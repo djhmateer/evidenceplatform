@@ -92,7 +92,8 @@ dependencies = [
     "argon2-cffi>=25.1.0",
     "tzlocal>=5.3.1",
     "pytz>=2025.2",
-    "opencv-python-headless>=4.11.0.86",
+    # pinned: 4.13.0.92 lacks Linux wheels, waiting for fix https://pypi.org/project/opencv-python-headless/#history
+    "opencv-python-headless==4.13.0.90",
 ]
 
 [tool.hatch.build.targets.wheel]

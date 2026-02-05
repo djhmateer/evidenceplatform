@@ -39,6 +39,11 @@ HOW IT WORKS:
 USAGE:
     Run with a stage argument:
         uv run db_loaders/archives_db_loader.py <stage>
+        uv run db_loaders/archives_db_loader.py <stage> --limit N
+
+    Options:
+        --limit N         Process only N new archives (useful for testing)
+        --archives-dir    Override the archives directory path
 
     Available stages:
 
@@ -96,6 +101,9 @@ EXAMPLE WORKFLOWS:
     # Initial load of all archives
     uv run db_loaders/archives_db_loader.py full
 
+    # Process only 1 new archive (useful for testing)
+    uv run db_loaders/archives_db_loader.py full --limit 1
+
     # After adding new archives to the archives/ folder
     uv run db_loaders/archives_db_loader.py full
 
@@ -137,7 +145,7 @@ from utils import db
 logger = logging.getLogger(__name__)
 
 
-def register_archives():
+def register_archives(limit: int | None = None):
     """
      Part A of full - scans directory. puts in an archive_session record for each unregistered archive
     """
@@ -147,6 +155,7 @@ def register_archives():
     archive_dirs = [d for d in ROOT_ARCHIVES.iterdir() if d.is_dir()]
     logger.info(f"Part A - Found {len(archive_dirs)} archive directories in {ROOT_ARCHIVES}")
 
+    registered_count = 0
     for archive_dir in archive_dirs:
         # Extract directory name to use as archive identifier eg eran_20250530_160037
         archive_name = archive_dir.name
@@ -177,9 +186,13 @@ def register_archives():
             return_type="id"
         )
         logger.info(f"Registered new archive: {archive_name}")
+        registered_count += 1
+        if limit is not None and registered_count >= limit:
+            logger.info(f"Part A - Reached limit of {limit} archives")
+            break
 
     elapsed = time.time() - start_time
-    logger.info(f"Part A register_archives complete in {elapsed:.1f}s")
+    logger.info(f"Part A register_archives complete in {elapsed:.1f}s (registered {registered_count} new archives)")
 
 
 PARSING_ALGORITHM_VERSION = 1
@@ -193,7 +206,7 @@ def strip_media_contents(data: ExtractedHarData) -> None:
         p.fetched_assets = None
 
 
-def parse_archives():
+def parse_archives(limit: int | None = None):
     """
      Part B of full - queries archive_session where parsed_content is null.
      looks for metadata.json.
@@ -202,7 +215,7 @@ def parse_archives():
     """
     import time
     start_time = time.time()
-    logger.info("Part B - Starting archive parsing")
+    logger.info(f"Part B - Starting archive parsing{f' (limit: {limit})' if limit else ''}")
     parsed_count = 0
     error_count = 0
 
@@ -336,6 +349,10 @@ def parse_archives():
                 )
                 logger.info(f"End of Part B - Step 4 - Successfully parsed archive: {entry_id}")
                 parsed_count += 1
+                if limit is not None and parsed_count >= limit:
+                    elapsed = time.time() - start_time
+                    logger.info(f"Part B - Reached limit of {limit} archives. {parsed_count} parsed, {error_count} errors in {elapsed:.1f}s")
+                    return
             except Exception as e:
                 traceback.print_exc()
                 raise Exception(f"Error saving parsed content to database for archive {entry_id}: {e}")
@@ -355,13 +372,13 @@ def parse_archives():
 ENTITY_EXTRACTION_ALGORITHM_VERSION = 1
 
 
-def extract_entities():
+def extract_entities(limit: int | None = None):
     """
     Part C of full - does db inserts for main entities... extraction error if a problem in archive_session
     """
     import time
     start_time = time.time()
-    logger.info("Part C Starting entity extraction")
+    logger.info(f"Part C Starting entity extraction{f' (limit: {limit})' if limit else ''}")
     extracted_count = 0
     error_count = 0
 
@@ -459,6 +476,11 @@ def extract_entities():
             entry_elapsed = time.time() - entry_start
             logger.info(f"Successfully extracted entities for: {entry_id} in {entry_elapsed:.1f}s")
             extracted_count += 1
+
+            if limit is not None and extracted_count >= limit:
+                elapsed = time.time() - start_time
+                logger.info(f"Part C - Reached limit of {limit} archives. {extracted_count} processed, {error_count} errors in {elapsed:.1f}s")
+                return
 
         except Exception as e:
             # Record error in DB so this archive is skipped on future runs
@@ -621,19 +643,44 @@ if __name__ == "__main__":
         handlers=[console_handler, debug_file_handler, error_file_handler]
     )
 
+    import argparse
+    from pathlib import Path
+
     valid_stages = ["register", "parse", "extract", "full", "add_attachments", "clear_errors", "add_metadata"]
 
-    if len(sys.argv) > 1:
-        stage = sys.argv[1].strip().lower()
+    arg_parser = argparse.ArgumentParser(description="Archive Database Loader")
+    arg_parser.add_argument("stage", nargs="?", choices=valid_stages,
+                            help=f"Processing stage to run ({', '.join(valid_stages)})")
+    arg_parser.add_argument("--archives-dir", type=str, default=None,
+                            help="Override the archives directory path (default: archives/ in project root)")
+    arg_parser.add_argument("--limit", type=int, default=None,
+                            help="Limit number of archives to process (default: no limit)")
+    args = arg_parser.parse_args()
+
+    if args.archives_dir:
+        archives_path = Path(args.archives_dir)
+        if not archives_path.exists():
+            print(f"Error: archives directory does not exist: {archives_path}")
+            sys.exit(1)
+        # Override ROOT_ARCHIVES in all modules that import it
+        import db_loaders.db_intake as _db_intake
+        import db_loaders.thumbnail_generator as _thumbnail_gen
+        _db_intake.ROOT_ARCHIVES = archives_path
+        _thumbnail_gen.ROOT_ARCHIVES = archives_path
+        globals()['ROOT_ARCHIVES'] = archives_path
+        logger.info(f"Using custom archives directory: {archives_path}")
+
+    if args.stage:
+        stage = args.stage
     else:
         stage = input(f"Enter stage ({', '.join(valid_stages)}): ").strip().lower()
 
     if stage == "register":
-        register_archives()
+        register_archives(limit=args.limit)
     elif stage == "parse":
-        parse_archives()
+        parse_archives(limit=args.limit)
     elif stage == "extract":
-        extract_entities()
+        extract_entities(limit=args.limit)
     elif stage == "full":
         import time
         full_start = time.time()
@@ -641,23 +688,23 @@ if __name__ == "__main__":
 
         # Part A: Register archives
         part_a_start = time.time()
-        register_archives()
+        register_archives(limit=args.limit)
         timings['A'] = time.time() - part_a_start
 
         # Part B: Parse archives
         part_b_start = time.time()
-        parse_archives()
+        parse_archives(limit=args.limit)
         timings['B'] = time.time() - part_b_start
 
         # Part C: Extract entities
         part_c_start = time.time()
-        extract_entities()
+        extract_entities(limit=args.limit)
         timings['C'] = time.time() - part_c_start
 
         # Part D: Generate thumbnails for any media missing them
         part_d_start = time.time()
-        logger.info("Starting thumbnail generation")
-        asyncio.run(generate_missing_thumbnails())
+        logger.info(f"Starting thumbnail generation{f' (limit: {args.limit})' if args.limit else ''}")
+        asyncio.run(generate_missing_thumbnails(limit=args.limit))
         timings['D'] = time.time() - part_d_start
 
         # Summary

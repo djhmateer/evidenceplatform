@@ -24,7 +24,7 @@
     "@types/node": "^18.19.130",
     "@types/node-fetch": "^2.6.13",
     "@types/pubsub-js": "^1.8.6",
-    "@types/react": "^18.3.27",
+    "@types/react": "^18.3.28",
     "@types/react-dom": "^18.3.7",
     "@types/rison": "^0.0.9",
     "@types/string-similarity": "^4.0.2",
