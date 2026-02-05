@@ -50,7 +50,10 @@ uv run db_loaders/archives_db_loader.py full
 
 # to read from a separate drive - careful to have archives in the remote folder.
 # took 6 hours to do the FTK run on dev
-uv run db_loaders/archives_db_loader.py full --archives-dir /mnt/f/archives
+uv run db_loaders/archives_db_loader.py full --archives-dir /mnt/u/archives
+
+ii
+
 ```
 
 This script processes archives in 4 stages:
