@@ -56,6 +56,7 @@ uv run db_loaders/archives_db_loader.py full --archives-dir /mnt/u/archives
 uv run db_loaders/archives_db_loader.py full --limit 100
 
 # keep going if ssh disconnects
+# took overnight to run on prod with 32GB RAM... maybe 14 hours.
 nohup uv run db_loaders/archives_db_loader.py full &
 
 
