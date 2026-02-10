@@ -38,7 +38,7 @@ async def get_archiving_session_data(item_id:int) -> Any:
 @router.get("/{item_id}/", dependencies=[Depends(_auth_archiving_session_view)])
 @router.get("/{item_id}", dependencies=[Depends(_auth_archiving_session_view)])
 async def get_archiving_session(item_id:int, req: Request) -> ArchiveSessionWithEntities:
-    session = get_enriched_archiving_session_by_id(item_id, extract_entities_transform_config(req))
+    session = get_enriched_archiving_session_by_id(item_id, extract_entities_transform_config(req), extract_session_transform_config(req))
     if not session:
         raise HTTPException(status_code=404, detail="Session Not Found")
     return session

@@ -20,7 +20,7 @@ class ArchivingSessionsList extends React.Component<IProps, IState> {
         const sessions = this.props.sessions;
         const loadingSessions = this.props.loadingSessions;
         return <Stack direction={"column"} gap={1} sx={{width: '100%'}}>
-            <Typography variant={"h6"}>Archiving History</Typography>
+            <Typography variant={"h6"} fontWeight={"bold"}>Archiving History</Typography>
             {
                 loadingSessions ?
                     <Box sx={{

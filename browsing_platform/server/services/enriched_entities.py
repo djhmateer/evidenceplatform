@@ -181,11 +181,13 @@ def get_enriched_account_by_id(
 
 def get_enriched_archiving_session_by_id(
         session_id: int,
-        config: Optional[EntitiesTransformConfig] = None
+        entities_transform: Optional[EntitiesTransformConfig] = None,
+        session_transform: Optional[ArchivingSessionTransform] = None
 ) -> Optional[ArchiveSessionWithEntities]:
     session = get_archiving_session_by_id(session_id)
     if session is None:
         return None
+    session = apply_sessions_transform([session], session_transform)[0]
     account_rows = db.execute_query(
         """SELECT a.id, aa.url, aa.archive_session_id, aa.display_name, aa.bio
            FROM account_archive AS aa
@@ -223,7 +225,7 @@ def get_enriched_archiving_session_by_id(
         posts=posts,
         media=media
     )
-    nested_entities = transform_and_nest(flattened_entities, config)
+    nested_entities = transform_and_nest(flattened_entities, entities_transform)
     return ArchiveSessionWithEntities(
         session=session,
         entities=nested_entities

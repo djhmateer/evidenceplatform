@@ -1,12 +1,14 @@
 import React from 'react';
 import {IArchiveSession} from "../../types/entities";
-import {Box, Card, CardContent, CardHeader, Divider, Skeleton, Stack, Typography} from "@mui/material";
+import {Box, Card, CardContent, CardHeader, Divider, IconButton, Skeleton, Stack, Typography} from "@mui/material";
 import {DataGrid} from "@mui/x-data-grid";
 import {Download, LocalMovies} from "@mui/icons-material";
 import {fetchArchivingSessionData} from "../../services/DataFetcher";
 import {anchor_local_static_files} from "../../services/server";
 import {EntityViewerConfig} from "./EntitiesViewerConfig";
 import TextField from "@mui/material/TextField";
+import {getShareTokenFromHref, SHARE_URL_PARAM} from "../../services/linkSharing";
+import LinkIcon from "@mui/icons-material/Link";
 
 interface IProps {
     archiveSession: IArchiveSession,
@@ -38,18 +40,6 @@ export default class ArchiveSessionMetadata extends React.Component <IProps, ISt
         };
     }
 
-    private fetchPostDetails = async () => {
-        const archiveSession = this.state.archiveSession;
-        const itemId = archiveSession.id;
-        if (this.state.awaitingDetailsFetch || itemId === undefined || itemId === null) {
-            return;
-        }
-        this.setState((curr => ({...curr, awaitingDetailsFetch: true})), async () => {
-            archiveSession.structures = await fetchArchivingSessionData(itemId);
-            this.setState((curr => ({...curr, awaitingDetailsFetch: false, archiveSession})));
-        });
-    }
-
     render() {
         const archiveSession = this.state.archiveSession;
         const metadata = archiveSession.metadata || {};
@@ -65,12 +55,30 @@ export default class ArchiveSessionMetadata extends React.Component <IProps, ISt
             {field: 'value', headerName: 'Value', flex: 2}
         ];
 
+        const shareToken = getShareTokenFromHref()
+
         return (
             <Stack
                 direction={"column"}
                 divider={<Divider orientation="horizontal" flexItem/>}
                 sx={{width: 600}}
             >
+                <Stack
+                    direction={"row"}
+                    alignItems={"center"}
+                    justifyContent={"space-between"}
+                    sx={{width: "100%", overflow: 'auto'}}
+                >
+                <Typography variant={"h6"}>Archiving Session {archiveSession.id}</Typography>
+                {
+                    this.props.viewerConfig?.all?.hideInnerLinks ? null : <IconButton
+                        color={"primary"}
+                        href={"/archive/" + archiveSession.id + (shareToken ? `?${SHARE_URL_PARAM}=${shareToken}` : '')}
+                    >
+                        <LinkIcon/>
+                    </IconButton>
+                }
+                </Stack>
                 <Stack
                     direction={"row"}
                     alignItems={"center"}

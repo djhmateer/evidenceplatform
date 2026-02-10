@@ -219,18 +219,38 @@ def graphql_to_entities(structure: GraphQLResponse) -> ExtractedEntitiesFlattene
         accounts=[], posts=[], media=[], comments=[], likes=[], followers=[], suggested_accounts=[], tagged_accounts=[]
     )
     if structure.reels_media:
-        extend_flattened_entities(entities, graphql_reels_media_to_entities(structure.reels_media))
+        try:
+            extend_flattened_entities(entities, graphql_reels_media_to_entities(structure.reels_media))
+        except Exception:
+            pass
     if structure.stories_feed:
-        extend_flattened_entities(entities, page_stories_to_entities(structure.stories_feed))
+        try:
+            extend_flattened_entities(entities, page_stories_to_entities(structure.stories_feed))
+        except Exception:
+            pass
     if structure.profile_timeline:
-        extend_flattened_entities(entities, graphql_profile_timeline_to_entities(structure.profile_timeline))
+        try:
+            extend_flattened_entities(entities, graphql_profile_timeline_to_entities(structure.profile_timeline))
+        except Exception:
+            pass
     if structure.comments_connection:
-        extend_flattened_entities(entities,
-                                  graphql_comments_to_entities(structure.comments_connection, structure.context)),
+        try:
+            extend_flattened_entities(
+                entities,
+                graphql_comments_to_entities(structure.comments_connection, structure.context)
+            )
+        except Exception:
+            pass
     if structure.likes:
-        extend_flattened_entities(entities, graphql_likes_to_entities(structure.likes, structure.context))
+        try:
+            extend_flattened_entities(entities, graphql_likes_to_entities(structure.likes, structure.context))
+        except Exception:
+            pass
     if structure.friends_list:
-        extend_flattened_entities(entities, graphql_friends_to_entities(structure.friends_list, structure.context))
+        try:
+            extend_flattened_entities(entities, graphql_friends_to_entities(structure.friends_list, structure.context))
+        except Exception:
+            pass
     return entities
 
 
