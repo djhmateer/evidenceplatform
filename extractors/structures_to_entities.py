@@ -1385,33 +1385,63 @@ def deduplicate_list_by_multiple_keys(
         key_fields: list[Callable[[T], Optional[str]]],
         merge_function: Callable[[T, T], T] = None
 ) -> list[T]:
-    # Filter down the set of entries such that no two entries have the same values for *any* of the key fields, unless the value is None
-    unique_entries: list[T] = []
-    entries_key_map: dict[tuple, int] = dict()
-    for entry in entries:
-        existing_copy: Optional[int] = None
-        for key_index in range(len(key_fields)):
-            key_field = key_fields[key_index]
-            key_value = key_field(entry)
-            if key_value is not None:
-                key = (key_index, key_value)
-                if key in entries_key_map:
-                    existing_copy = entries_key_map[key]
-                    break
-        if existing_copy is None:
-            unique_entries.append(entry)
-            existing_copy = len(unique_entries) - 1
+    # Collapse entries that share any identifier — directly or transitively through
+    # a third entry that bridges two otherwise-disjoint identifier sets. The previous
+    # left-to-right algorithm could leave such bridged pairs separate when the third
+    # entry arrived later, because already-stored entries were never re-evaluated.
+    # Union-find over (key_index, key_value) pairs makes the equivalence transitive.
+    if not entries:
+        return []
+    n = len(entries)
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i: int, j: int) -> None:
+        ri, rj = find(i), find(j)
+        if ri == rj:
+            return
+        # Keep the smaller (earlier-encountered) index as root so result order
+        # matches first-appearance order of each cluster.
+        if ri < rj:
+            parent[rj] = ri
         else:
-            unique_entries[existing_copy] = merge_function(unique_entries[existing_copy], entry) if merge_function else \
-                unique_entries[existing_copy]
-        assert existing_copy is not None
-        for key_index in range(len(key_fields)):
-            key_field = key_fields[key_index]
-            key_value = key_field(entry)
-            if key_value is not None:
-                key = (key_index, key_value)
-                entries_key_map[key] = existing_copy
-    return unique_entries
+            parent[ri] = rj
+
+    for key_index, key_field in enumerate(key_fields):
+        first_index_for_value: dict = {}
+        for i, entry in enumerate(entries):
+            value = key_field(entry)
+            if value is None:
+                continue
+            if value in first_index_for_value:
+                union(first_index_for_value[value], i)
+            else:
+                first_index_for_value[value] = i
+
+    components: dict[int, list[int]] = {}
+    for i in range(n):
+        components.setdefault(find(i), []).append(i)
+
+    result: list[T] = []
+    # Iterate components in order of their root (= smallest member index), so the
+    # output preserves the order entries were first seen.
+    for root in sorted(components.keys()):
+        member_indices = components[root]
+        merged = entries[member_indices[0]]
+        if merge_function is not None and len(member_indices) > 1:
+            # Fold later entries into the accumulator in original order. This
+            # matches the original semantics (merge_function(older, newer) — newer
+            # wins on conflicts, older fills gaps), so later observations of the
+            # same logical entity still take precedence.
+            for idx in member_indices[1:]:
+                merged = merge_function(merged, entries[idx])
+        result.append(merged)
+    return result
 
 
 def deduplicate_entities(entities: ExtractedEntitiesFlattened) -> ExtractedEntitiesFlattened:

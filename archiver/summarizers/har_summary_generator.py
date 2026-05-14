@@ -19,38 +19,56 @@ def generate_stylesheet() -> str:
 
 :root {
     --ig-gradient: linear-gradient(45deg, #833ab4, #fd1d1d, #fcb045);
-    --bg: #f0f2f5;
-    --card-bg: #ffffff;
-    --border: #e8eaed;
-    --text-primary: #1c1e21;
-    --text-secondary: #1c1e21;
-    --text-link: #1877f2;
-    --radius: 12px;
-    --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.04);
+    --bg: #eef1f5;
+    --surface: #ffffff;
+    --surface-2: #f8fafc;
+    --surface-3: #f1f5f9;
+    --border: #e2e8f0;
+    --border-strong: #cbd5e1;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #64748b;
+    --text-link: #1d4ed8;
+    --accent: #833ab4;
+    --radius: 14px;
+    --radius-sm: 8px;
+    --shadow-sm: 0 1px 2px rgba(15,23,42,0.04), 0 1px 1px rgba(15,23,42,0.03);
+    --shadow: 0 1px 3px rgba(15,23,42,0.06), 0 8px 24px rgba(15,23,42,0.05);
 }
+
+html { scrollbar-color: #cbd5e1 transparent; scrollbar-width: thin; }
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, sans-serif;
-    font-size: 14px;
+    font-size: 15px;
     background: var(--bg);
     color: var(--text-primary);
-    line-height: 1.5;
-    padding: 24px;
+    line-height: 1.55;
+    padding: 0;
     min-height: 100vh;
+}
+
+.page {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 24px 20px 96px;
 }
 
 .summary-title {
     font-size: 20px;
     font-weight: 700;
     color: var(--text-primary);
-    margin-bottom: 24px;
-    padding: 18px 24px;
-    background: var(--card-bg);
+    margin-bottom: 20px;
+    padding: 16px 22px;
+    background: var(--surface);
     border-radius: var(--radius);
     border: 1px solid var(--border);
     box-shadow: var(--shadow);
-    position: relative;
+    position: sticky;
+    top: 12px;
+    z-index: 20;
     overflow: hidden;
+    backdrop-filter: saturate(140%) blur(8px);
 }
 .summary-title::before {
     content: '';
@@ -59,22 +77,32 @@ body {
     width: 4px;
     background: var(--ig-gradient);
 }
+.summary-counts {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
 
 .section-title {
-    font-size: 15px;
+    font-size: 12px;
     font-weight: 700;
-    color: var(--text-primary);
-    margin-bottom: 12px;
-    padding-left: 4px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 28px 4px 10px;
 }
 
 /* ── Account card ─────────────────────────────────── */
 .account-card {
-    background: var(--card-bg);
+    background: var(--surface);
     border-radius: var(--radius);
     border: 1px solid var(--border);
     box-shadow: var(--shadow);
-    margin-bottom: 16px;
+    margin-bottom: 18px;
     overflow: hidden;
 }
 
@@ -82,7 +110,7 @@ body {
     display: flex;
     align-items: flex-start;
     gap: 14px;
-    padding: 20px 24px;
+    padding: 18px 22px;
     border-bottom: 1px solid var(--border);
 }
 
@@ -145,10 +173,12 @@ body {
 
 .relation-type {
     font-size: 11px; font-weight: 600;
-    background: #f0f2f5;
+    background: var(--surface-3);
     padding: 2px 8px; border-radius: 10px;
     color: var(--text-secondary);
     flex-shrink: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
 }
 
 .relation-name { font-weight: 600; color: var(--text-primary); }
@@ -162,23 +192,24 @@ body {
 }
 .relation-url:hover { text-decoration: underline; }
 
-.account-posts { padding: 0 24px 16px; }
+.account-posts { padding: 4px 22px 18px; }
 
 .account-posts-label {
-    font-size: 12px; font-weight: 600;
+    font-size: 11px; font-weight: 700;
     color: var(--text-secondary);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    padding: 16px 0 12px;
+    letter-spacing: 0.08em;
+    padding: 14px 0 10px;
 }
 
 /* ── Post card ───────────────────────────────────── */
 .post-card {
     border: 1px solid var(--border);
-    border-radius: 8px;
-    margin-bottom: 12px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 14px;
     overflow: hidden;
-    background: #fafbfc;
+    background: var(--surface-2);
+    box-shadow: var(--shadow-sm);
 }
 
 .post-header { padding: 14px 16px 10px; }
@@ -190,21 +221,23 @@ body {
 
 .post-date {
     font-size: 12px; color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
 }
 
 .post-url-chip {
-    font-family: 'Courier New', Courier, monospace;
+    font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", monospace;
     font-size: 11px;
-    background: #e8eaed;
+    background: var(--surface-3);
     color: var(--text-link);
-    padding: 2px 8px; border-radius: 4px;
+    padding: 3px 9px; border-radius: 6px;
     text-decoration: none;
     white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis;
-    max-width: 320px;
+    max-width: 360px;
     display: inline-block;
+    border: 1px solid var(--border);
 }
-.post-url-chip:hover { background: #d8dadf; }
+.post-url-chip:hover { background: var(--surface); border-color: var(--border-strong); }
 
 .post-caption {
     font-size: 14px; color: var(--text-primary);
@@ -227,79 +260,113 @@ body {
 
 /* ── Media grid ──────────────────────────────────── */
 .post-media-grid {
-    display: flex; flex-wrap: wrap; gap: 8px;
-    padding: 0 16px 12px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+    align-items: start;
+    padding: 0 16px 14px;
 }
 
 .media-item {
     display: flex; flex-direction: column;
-    align-items: center; gap: 6px;
+    gap: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
 }
 
 .media-preview {
-    max-width: 220px; width: 220px;
-    max-height: 220px;
-    border-radius: 8px;
-    object-fit: cover;
-    border: 1px solid var(--border);
+    width: 100%;
+    height: auto;
+    max-height: 520px;
+    object-fit: contain;
+    border-radius: 6px;
     display: block;
-    background: #f0f2f5;
+    background: #0b0d12;
 }
-video.media-preview { height: auto; }
-audio.media-preview { width: 220px; height: auto; }
+video.media-preview, audio.media-preview { width: 100%; height: auto; }
+audio.media-preview { background: var(--surface-3); }
+
+.media-actions {
+    display: flex; gap: 6px; flex-wrap: wrap;
+    align-items: center;
+}
 
 .download-btn {
     display: inline-flex; align-items: center; gap: 4px;
-    padding: 5px 14px;
+    padding: 6px 14px;
     background: var(--ig-gradient);
     color: #fff;
     font-size: 12px; font-weight: 600;
     text-decoration: none;
     border-radius: 6px;
-    transition: opacity 0.15s;
+    transition: opacity 0.15s, transform 0.15s;
     white-space: nowrap;
 }
-.download-btn:hover { opacity: 0.82; }
+.download-btn:hover { opacity: 0.9; transform: translateY(-1px); }
 
 /* ── Collapsible sections ────────────────────────── */
 .collapsible-section { border-top: 1px solid var(--border); }
 
 .collapsible-header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 16px;
+    width: 100%;
+    padding: 11px 16px;
     cursor: pointer;
     user-select: none;
     font-size: 13px; font-weight: 600;
     color: var(--text-secondary);
-    transition: background 0.15s;
+    background: transparent;
+    border: 0;
+    text-align: left;
+    font-family: inherit;
+    transition: background 0.15s, color 0.15s;
 }
-.collapsible-header:hover { background: #f7f8fa; }
+.collapsible-header:hover { background: var(--surface-3); color: var(--text-primary); }
+.collapsible-header:focus-visible {
+    outline: 2px solid var(--text-link);
+    outline-offset: -2px;
+}
 
 .collapsible-indicator {
-    font-size: 10px;
-    display: inline-block;
-    transition: transform 0.2s;
+    display: inline-flex;
+    align-items: center; justify-content: center;
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: var(--surface-3);
     color: var(--text-secondary);
+    font-size: 14px; font-weight: 700;
+    line-height: 1;
+    transition: background 0.15s, color 0.15s;
 }
-.collapsible-header.open .collapsible-indicator {
-    transform: rotate(90deg);
-}
+.collapsible-indicator::before { content: "+"; }
+.collapsible-header.open .collapsible-indicator { background: var(--text-secondary); color: #fff; }
+.collapsible-header.open .collapsible-indicator::before { content: "−"; }
 
-.collapsible-body { display: none; padding: 8px 16px 12px; }
+.collapsible-body { display: none; padding: 10px 16px 14px; }
 .collapsible-body.open { display: block; }
 
-/* JSON data — visually de-emphasized */
+/* JSON data — de-emphasized via size + surface, NOT contrast */
 .json-collapsible .collapsible-header {
-    font-size: 11px; color: #b0b4be;
-    font-weight: 400; padding: 7px 16px;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 600;
+    padding: 8px 16px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
 }
+.json-collapsible .collapsible-header:hover { color: var(--text-secondary); }
 .json-collapsible .collapsible-body {
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 11px; color: #9ea3ab;
+    font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
     white-space: pre-wrap; word-break: break-all;
-    background: #f9fafb;
-    max-height: 280px; overflow-y: auto;
-    padding: 8px 16px 10px;
+    background: var(--surface-2);
+    border-top: 1px solid var(--border);
+    max-height: 320px; overflow: auto;
+    padding: 10px 16px 12px;
+    line-height: 1.5;
 }
 
 /* ── Comments ────────────────────────────────────── */
@@ -307,13 +374,16 @@ audio.media-preview { width: 220px; height: auto; }
 
 .comment-item {
     border-left: 3px solid var(--border);
-    padding: 8px 12px;
+    padding: 9px 12px;
     border-radius: 0 6px 6px 0;
-    transition: border-color 0.15s;
-    background: #fff;
+    transition: border-color 0.15s, background 0.15s;
+    background: var(--surface);
 }
-.comment-item:hover { border-left-color: #833ab4; }
-.comment-item.reply { margin-left: 24px; }
+.comment-item:hover { border-left-color: var(--accent); background: var(--surface-2); }
+.comment-item.reply {
+    margin-left: 24px;
+    border-left-color: var(--border-strong);
+}
 
 .comment-meta { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 
@@ -335,7 +405,7 @@ audio.media-preview { width: 220px; height: auto; }
 .likes-grid { display: flex; flex-wrap: wrap; gap: 6px; }
 
 .like-pill {
-    background: #f0f2f5;
+    background: var(--surface-3);
     color: var(--text-primary);
     font-size: 13px;
     padding: 4px 12px;
@@ -343,8 +413,9 @@ audio.media-preview { width: 220px; height: auto; }
     text-decoration: none;
     transition: background 0.15s;
     white-space: nowrap;
+    border: 1px solid var(--border);
 }
-.like-pill:hover { background: #e4e6eb; }
+.like-pill:hover { background: var(--surface); border-color: var(--border-strong); }
 
 /* ── Tagged accounts ─────────────────────────────── */
 .tagged-grid { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -365,39 +436,91 @@ audio.media-preview { width: 220px; height: auto; }
 
 /* ── Metadata table ──────────────────────────────── */
 .metadata-section {
-    background: var(--card-bg);
+    background: var(--surface);
     border-radius: var(--radius);
     border: 1px solid var(--border);
     box-shadow: var(--shadow);
     overflow: hidden;
-    margin-top: 24px;
+    margin-top: 28px;
 }
-.metadata-section .section-title { padding: 16px 20px 4px; }
+.metadata-section > .section-title {
+    margin: 0;
+    padding: 16px 20px 10px;
+    background: var(--surface);
+}
 
-table { width: 100%; border-collapse: collapse; }
-th, td {
+.metadata-section table { width: 100%; border-collapse: collapse; }
+.metadata-section th, .metadata-section td {
     text-align: left;
     padding: 9px 16px;
     font-size: 13px;
     border-bottom: 1px solid var(--border);
     vertical-align: top;
+    color: var(--text-primary);
 }
-th {
-    background: #f7f8fa;
+.metadata-section th {
+    background: var(--surface-2);
     font-weight: 600; color: var(--text-secondary);
     font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;
     width: 28%;
     white-space: nowrap;
 }
-tr:last-child td, tr:last-child th { border-bottom: none; }
-tr:hover td { background: #f9fafb; }
+.metadata-section tr:last-child td, .metadata-section tr:last-child th { border-bottom: none; }
+.metadata-section tr:hover td { background: var(--surface-2); }
 
-ul { list-style: disc; padding-left: 20px; margin: 4px 0; }
-li { margin-bottom: 2px; font-size: 13px; }
+.metadata-section ul { list-style: disc; padding-left: 20px; margin: 4px 0; }
+.metadata-section li { margin-bottom: 2px; font-size: 13px; }
 
-::-webkit-scrollbar { width: 6px; height: 6px; }
+/* ── Scrollbars (visible) ──────────────────────────── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #d0d3da; border-radius: 3px; }
+::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ── Back-to-top ───────────────────────────────────── */
+.back-to-top {
+    position: fixed;
+    right: 24px; bottom: 24px;
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 700;
+    text-decoration: none;
+    transition: transform 0.15s, box-shadow 0.15s;
+    z-index: 30;
+}
+.back-to-top:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(15,23,42,0.12), 0 12px 32px rgba(15,23,42,0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+
+@media print {
+    body { background: #fff; }
+    .page { max-width: none; padding: 0; }
+    .summary-title { position: static; box-shadow: none; }
+    .back-to-top { display: none; }
+    .account-card, .post-card, .metadata-section {
+        box-shadow: none;
+        page-break-inside: avoid;
+    }
+    .collapsible-body { display: block !important; max-height: none !important; }
+    .collapsible-indicator { display: none; }
+    .json-collapsible .collapsible-body { overflow: visible; }
+}
 """
 
 
@@ -405,7 +528,8 @@ def generate_scripts() -> str:
     return """
 document.querySelectorAll('.collapsible-header').forEach(function(header) {
     header.addEventListener('click', function() {
-        this.classList.toggle('open');
+        var opened = this.classList.toggle('open');
+        this.setAttribute('aria-expanded', opened ? 'true' : 'false');
         var body = this.nextElementSibling;
         if (body) body.classList.toggle('open');
     });
@@ -432,26 +556,24 @@ def _make_collapsible(header_text: str, body_tag: Tag, soup: BeautifulSoup,
     section = soup.new_tag("div")
     section['class'] = f"collapsible-section {extra_class}".strip()
 
-    header = soup.new_tag("div")
+    header = soup.new_tag("button", type="button")
     header['class'] = f"collapsible-header {'open' if start_open else ''}".strip()
+    header['aria-expanded'] = 'true' if start_open else 'false'
 
     label = soup.new_tag("span")
+    label['class'] = "collapsible-label"
     label.string = header_text
     indicator = soup.new_tag("span")
     indicator['class'] = "collapsible-indicator"
-    indicator.string = "▶"
 
     header.append(label)
     header.append(indicator)
     section.append(header)
 
-    existing = body_tag.get('class') or ''
-    classes = [c for c in (existing if isinstance(existing, list) else existing.split()) if c]
-    classes.append("collapsible-body")
-    if start_open:
-        classes.append("open")
-    body_tag['class'] = " ".join(classes)
-    section.append(body_tag)
+    wrapper = soup.new_tag("div")
+    wrapper['class'] = f"collapsible-body {'open' if start_open else ''}".strip()
+    wrapper.append(body_tag)
+    section.append(wrapper)
 
     return section
 
@@ -589,21 +711,27 @@ def summarize_media(media: MediaAndAssociatedEntities, soup: BeautifulSoup) -> T
     item['class'] = "media-item"
 
     if media.media_type == "image":
-        preview = soup.new_tag("img", src=media.local_url)
+        preview = soup.new_tag("img", src=media.local_url, loading="lazy")
     elif media.media_type == "video":
-        preview = soup.new_tag("video", src=media.local_url, controls="true")
+        preview = soup.new_tag("video", src=media.local_url, controls="true", preload="metadata")
     elif media.media_type == "audio":
-        preview = soup.new_tag("audio", src=media.local_url, controls="true")
+        preview = soup.new_tag("audio", src=media.local_url, controls="true", preload="metadata")
     else:
         preview = soup.new_tag("span")
         preview.string = "Unsupported media"
     preview['class'] = "media-preview"
     item.append(preview)
 
+    actions = soup.new_tag("div")
+    actions['class'] = "media-actions"
     download = soup.new_tag("a", href=media.local_url, download="true")
     download['class'] = "download-btn"
     download.string = "↓ Download"
-    item.append(download)
+    actions.append(download)
+    item.append(actions)
+
+    if media.data is not None:
+        item.append(_make_json_collapsible(media.data, soup))
 
     return item
 
@@ -779,21 +907,39 @@ def summarize_nested_entities(nested_entities: ExtractedEntitiesNested, metadata
 
     body = soup.body
 
-    title = soup.new_tag("h1")
+    page = soup.new_tag("div")
+    page['class'] = "page"
+    body.append(page)
+
+    title = soup.new_tag("h1", id="top")
     title['class'] = "summary-title"
-    title.string = page_title
-    body.append(title)
+    title_label = soup.new_tag("span")
+    title_label.string = page_title
+    title.append(title_label)
+
+    n_accounts = len(nested_entities.accounts)
+    n_posts = sum(len(a.account_posts) for a in nested_entities.accounts) + len(nested_entities.posts)
+    n_media = (
+        sum(len(p.post_media) for a in nested_entities.accounts for p in a.account_posts)
+        + sum(len(p.post_media) for p in nested_entities.posts)
+        + len(nested_entities.media)
+    )
+    counts = soup.new_tag("span")
+    counts['class'] = "summary-counts"
+    counts.string = f"{n_accounts} accounts · {n_posts} posts · {n_media} media"
+    title.append(counts)
+    page.append(title)
 
     if nested_entities.accounts:
         section = soup.new_tag("div")
         section['class'] = "accounts-section"
         lbl = soup.new_tag("div")
         lbl['class'] = "section-title"
-        lbl.string = f"Accounts ({len(nested_entities.accounts)})"
+        lbl.string = f"Accounts ({n_accounts})"
         section.append(lbl)
         for account in nested_entities.accounts:
             section.append(summarize_account(account, soup))
-        body.append(section)
+        page.append(section)
 
     if nested_entities.posts:
         section = soup.new_tag("div")
@@ -804,7 +950,7 @@ def summarize_nested_entities(nested_entities: ExtractedEntitiesNested, metadata
         section.append(lbl)
         for post in nested_entities.posts:
             section.append(summarize_post(post, soup))
-        body.append(section)
+        page.append(section)
 
     if nested_entities.media:
         section = soup.new_tag("div")
@@ -818,7 +964,7 @@ def summarize_nested_entities(nested_entities: ExtractedEntitiesNested, metadata
         for media in nested_entities.media:
             grid.append(summarize_media(media, soup))
         section.append(grid)
-        body.append(section)
+        page.append(section)
 
     # Metadata
     meta_section = soup.new_tag("div")
@@ -828,7 +974,13 @@ def summarize_nested_entities(nested_entities: ExtractedEntitiesNested, metadata
     lbl.string = "Archive Metadata"
     meta_section.append(lbl)
     meta_section.append(_generate_table_rec(metadata, soup))
-    body.append(meta_section)
+    page.append(meta_section)
+
+    back_to_top = soup.new_tag("a", href="#top")
+    back_to_top['class'] = "back-to-top"
+    back_to_top['aria-label'] = "Back to top"
+    back_to_top.string = "↑"
+    body.append(back_to_top)
 
     # Scripts
     script_tag = soup.new_tag("script")

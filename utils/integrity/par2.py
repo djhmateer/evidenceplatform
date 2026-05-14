@@ -25,7 +25,7 @@ except Exception:
 
 PAR2_LOCATION_FILE = Path(ROOT_DIR) / "utils" / "integrity" / "par2_location.txt"
 
-DEFAULT_REDUNDANCY_PCT = 40
+DEFAULT_REDUNDANCY_PCT = 20
 
 
 class Par2NotFoundError(RuntimeError):

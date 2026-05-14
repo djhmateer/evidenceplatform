@@ -77,7 +77,6 @@ async def verify_2fa(data: Verify2FARequest, request: Request) -> AuthTokenRespo
         "INSERT INTO token (user_id, token) VALUES (%(uid)s, %(tok)s)",
         {"uid": user_id, "tok": token}, "none"
     )
-    log_event("2fa_attempt", user_id, json.dumps({"success": True}), "{}")
 
     return AuthTokenResponse(token=token, permissions=bool(user_row["admin"]))
 

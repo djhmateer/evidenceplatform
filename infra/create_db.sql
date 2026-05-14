@@ -201,7 +201,7 @@ create table error_log
     id         int auto_increment
         primary key,
     timestamp  timestamp default CURRENT_TIMESTAMP                                                        null,
-    event_type enum ('server_call', 'sql_error', 'unknown_error', 'unauthorized_access', 'login_attempt') not null,
+    event_type enum ('server_call', 'sql_error', 'unknown_error', 'unauthorized_access', 'login_attempt', '2fa_attempt') not null,
     user_id    int                                                                                        null,
     details    text                                                                                       null,
     args       text                                                                                       null

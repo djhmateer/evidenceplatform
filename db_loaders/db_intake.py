@@ -303,6 +303,25 @@ def incorporate_structures_into_db(
                     logger.warning(f"Skipping {skipped} {entity_config.key} with no id_on_platform")
                 entities = valid_entities
 
+            # A comment or like that references a post not present in this archive and
+            # not previously ingested cannot be linked to its parent. This is a rare
+            # Instagram-side artifact (the engagement endpoint loaded without the post
+            # endpoint). Drop the affected rows quietly so the rest of the HAR still
+            # incorporates rather than failing the whole session.
+            if entity_config.key in ("comments", "likes") and entities:
+                batch_resolve_post_fks(entities, 'post_url_suffix', 'post_id_on_platform', 'post_id')
+                valid_entities = [
+                    e for e in entities
+                    if not (e.post_id is None and (e.post_url_suffix or e.post_id_on_platform))
+                ]
+                dropped = len(entities) - len(valid_entities)
+                if dropped:
+                    logger.warning(
+                        f"Dropping {dropped} {entity_config.key} whose parent post is "
+                        f"not present in this archive or the database"
+                    )
+                entities = valid_entities
+
             if not entities:
                 logger.info(f"Processed {entity_config.key}: 0 new, 0 updated")
                 continue
@@ -322,6 +341,29 @@ def incorporate_structures_into_db(
                     new_entities.append(entity)
                 else:
                     existing_pairs.append((entity, canonical))
+
+            # Two extracted entities can resolve to the same DB canonical when each
+            # matches it via a different identifier (e.g. one by url_suffix, the other
+            # by id_on_platform) and the deduplication step couldn't bridge them.
+            # Collapse to one pair per canonical here, merging the observations, so
+            # downstream archive insertion doesn't violate uq_<table>_canonical_session.
+            if existing_pairs:
+                pair_by_canonical_id: dict = {}
+                for entity, canonical in existing_pairs:
+                    cid = canonical.id
+                    prior = pair_by_canonical_id.get(cid)
+                    if prior is None:
+                        pair_by_canonical_id[cid] = (entity, canonical)
+                    else:
+                        prior_entity, prior_canonical = prior
+                        merged_entity = entity_config.merge(prior_entity, entity)
+                        pair_by_canonical_id[cid] = (merged_entity, prior_canonical)
+                if len(pair_by_canonical_id) < len(existing_pairs):
+                    logger.debug(
+                        f"Collapsed {len(existing_pairs) - len(pair_by_canonical_id)} "
+                        f"{entity_config.key} that resolved to the same canonical via different identifiers"
+                    )
+                existing_pairs = list(pair_by_canonical_id.values())
 
             existing_canonical_ids: list = [c.id for _, c in existing_pairs]
 
