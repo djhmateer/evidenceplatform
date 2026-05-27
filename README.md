@@ -1,5 +1,9 @@
 # Evidence Platform
 
+**SEE ALSO create_webserver_exoscale.sh for good useful stuff**
+
+
+
 ## Development Setup
 
 ### Prerequisites
@@ -237,6 +241,8 @@ uv run infra/migrate.py --one-at-a-time
 ```
 
 ## Exoscale
+
+see secrets/create_webserver_exoscale.sh
 
 ```bash
 # dump prod on Azure
