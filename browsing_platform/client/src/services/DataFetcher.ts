@@ -189,6 +189,46 @@ export type T_Search_Mode = typeof SEARCH_MODES[number]['key'];
 export const DEFAULT_PAGE_SIZES: Partial<Record<T_Search_Mode, number>> = {media: 100};
 export const defaultPageSize = (mode: T_Search_Mode): number => DEFAULT_PAGE_SIZES[mode] ?? 20;
 
+// Combined "Sort By" dropdown options per search mode. Each entry maps to a {sort_by, sort_order}
+// pair sent to the server; the first entry ('default') preserves the server's default ordering
+// (relevance while searching, id/date otherwise). archive_sessions is intentionally absent → no control.
+export interface SortOption {
+    key: string;
+    label: string;
+    sort_by: string | null;
+    sort_order: 'asc' | 'desc' | null;
+}
+
+const POST_MEDIA_SORT_OPTIONS: SortOption[] = [
+    {key: 'default', label: 'Best match', sort_by: null, sort_order: null},
+    {key: 'date_desc', label: 'Newest first', sort_by: 'publication_date', sort_order: 'desc'},
+    {key: 'date_asc', label: 'Oldest first', sort_by: 'publication_date', sort_order: 'asc'},
+    {key: 'id_desc', label: 'Recently added', sort_by: 'id', sort_order: 'desc'},
+    {key: 'id_asc', label: 'First added', sort_by: 'id', sort_order: 'asc'},
+];
+
+export const SORT_OPTIONS: Partial<Record<T_Search_Mode, SortOption[]>> = {
+    accounts: [
+        {key: 'default', label: 'Best match', sort_by: null, sort_order: null},
+        {key: 'id_desc', label: 'Recently added', sort_by: 'id', sort_order: 'desc'},
+        {key: 'id_asc', label: 'First added', sort_by: 'id', sort_order: 'asc'},
+        {key: 'handle_az', label: 'Handle A–Z', sort_by: 'url_suffix', sort_order: 'asc'},
+        {key: 'handle_za', label: 'Handle Z–A', sort_by: 'url_suffix', sort_order: 'desc'},
+        {key: 'name_az', label: 'Name A–Z', sort_by: 'display_name', sort_order: 'asc'},
+        {key: 'name_za', label: 'Name Z–A', sort_by: 'display_name', sort_order: 'desc'},
+    ],
+    posts: POST_MEDIA_SORT_OPTIONS,
+    media: POST_MEDIA_SORT_OPTIONS,
+};
+
+// Resolve the active option key from a query, for use as the <Select value>.
+export const sortKeyFromQuery = (q: ISearchQuery): string => {
+    const opts = SORT_OPTIONS[q.search_mode];
+    if (!opts) return 'default';
+    return (opts.find(o => o.sort_by === (q.sort_by ?? null)
+        && o.sort_order === (q.sort_order ?? null)) ?? opts[0]).key;
+};
+
 const disabled_operators_by_type: { [key: string]: string[] } = {
     'text': ['starts_with', 'ends_with', 'proximity'],
 }
@@ -298,6 +338,8 @@ export interface ISearchQuery {
     page_size: number;
     tag_ids?: number[];
     tag_filter_mode?: "any" | "all";
+    sort_by?: string | null;
+    sort_order?: 'asc' | 'desc' | null;
 }
 
 export interface Thumbnail {

@@ -44,6 +44,8 @@ import {
     SEARCH_MODES,
     searchData,
     SearchResult,
+    SORT_OPTIONS,
+    sortKeyFromQuery,
     T_Search_Mode,
 } from '../../services/DataFetcher';
 import {ITagWithType} from '../../types/tags';
@@ -257,7 +259,7 @@ export default function SearchPanel(props: SearchPanelProps) {
                 onChange={e => {
                     const newMode = e.target.value as T_Search_Mode;
                     setAdvancedFiltersTree(getEmptyTree());
-                    performSearch({search_mode: newMode, advanced_filters: null, page_size: defaultPageSize(newMode)});
+                    performSearch({search_mode: newMode, advanced_filters: null, page_size: defaultPageSize(newMode), sort_by: null, sort_order: null});
                 }}
                 sx={{
                     width: '100%',
@@ -267,6 +269,27 @@ export default function SearchPanel(props: SearchPanelProps) {
             >
                 {SEARCH_MODES.map(m => (
                     <MenuItem key={m.key} value={m.key}>{m.label}</MenuItem>
+                ))}
+            </Select>
+        </FormControl>
+    ) : null;
+
+    const sortOptions = SORT_OPTIONS[query.search_mode];
+    const sortSelector = sortOptions ? (
+        <FormControl variant="standard" sx={{minWidth: 160}}>
+            <Select
+                value={sortKeyFromQuery(query)}
+                onChange={e => {
+                    const opt = sortOptions.find(o => o.key === e.target.value);
+                    if (opt) performSearch({sort_by: opt.sort_by, sort_order: opt.sort_order});
+                }}
+                sx={{
+                    '& .MuiSelect-select': {paddingLeft: '8px'},
+                    '::before': {borderBottom: 'none !important'},
+                }}
+            >
+                {sortOptions.map(o => (
+                    <MenuItem key={o.key} value={o.key}>{o.label}</MenuItem>
                 ))}
             </Select>
         </FormControl>
@@ -496,8 +519,8 @@ export default function SearchPanel(props: SearchPanelProps) {
                     </Collapse>
                 )}
 
-                {/* Shortcuts + Tag Mode toggle */}
-                {(SearchShortcuts || (showTaggingMode && SEARCH_MODE_TO_ENTITY[query.search_mode])) && (
+                {/* Shortcuts + Sort By + Tag Mode toggle */}
+                {(SearchShortcuts || sortSelector || (showTaggingMode && SEARCH_MODE_TO_ENTITY[query.search_mode])) && (
                     <Stack
                         direction="row"
                         justifyContent="space-between"
@@ -507,17 +530,20 @@ export default function SearchPanel(props: SearchPanelProps) {
                         {SearchShortcuts
                             ? <SearchShortcuts tree={advancedFiltersTree} onChange={onShortcutChange}/>
                             : <Box/>}
-                        {!isMobile && showTaggingMode && tagging && SEARCH_MODE_TO_ENTITY[query.search_mode] && (
-                            <Button
-                                size="small"
-                                variant={tagging.isActive ? 'contained' : 'outlined'}
-                                startIcon={<LocalOfferIcon fontSize="small"/>}
-                                onClick={tagging.onToggle}
-                                sx={{flexShrink: 0, ml: 2}}
-                            >
-                                Tag Mode
-                            </Button>
-                        )}
+                        <Stack direction="row" alignItems="center" gap={2} sx={{flexShrink: 0, ml: 2}}>
+                            {sortSelector}
+                            {!isMobile && showTaggingMode && tagging && SEARCH_MODE_TO_ENTITY[query.search_mode] && (
+                                <Button
+                                    size="small"
+                                    variant={tagging.isActive ? 'contained' : 'outlined'}
+                                    startIcon={<LocalOfferIcon fontSize="small"/>}
+                                    onClick={tagging.onToggle}
+                                    sx={{flexShrink: 0}}
+                                >
+                                    Tag Mode
+                                </Button>
+                            )}
+                        </Stack>
                     </Stack>
                 )}
 

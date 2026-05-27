@@ -298,6 +298,7 @@ function buildTarBlob(
 
 const ITEMS_PER_PAGE = 10;
 const MAX_CONCURRENT_UPLOADS = 10;
+const HASH_CONCURRENCY = Math.min(navigator.hardwareConcurrency || 4, 8);
 
 async function runConcurrently<T>(
     tasks: (() => Promise<T>)[],
@@ -310,7 +311,7 @@ async function runConcurrently<T>(
         results.push(p);
         executing.add(p);
         p.finally(() => executing.delete(p));
-        if (executing.size >= limit) await Promise.race(executing).catch(() => {});
+        while (executing.size >= limit) await Promise.race(executing).catch(() => {});
     }
     return Promise.allSettled(results);
 }
@@ -329,18 +330,20 @@ export default function UploadPage() {
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const [isAddingMore, setIsAddingMore] = useState(false);
 
-    // Refs shared with async upload callbacks
     const activeUploadsRef = useRef<Map<string, TusUpload>>(new Map());
     const cancelledRef = useRef(false);
     const dragCounterRef = useRef(0);
-    const pageContainerRef = useRef<HTMLDivElement>(null);
+    const uploadStartTimeRef = useRef<number>(0);
+    const speedSamplesRef = useRef<{ time: number; bytes: number }[]>([]);
+    const elapsedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    // Mirrors `archives` for read-only access from network/timer callbacks where the
+    // closure-captured value can lag behind unflushed setArchives updates.
+    const archivesRef = useRef<ArchiveState[]>(archives);
+    archivesRef.current = archives;
 
     useEffect(() => {
         document.title = 'Upload | Browsing Platform';
     }, []);
-    const uploadStartTimeRef = useRef<number>(0);
-    const speedSamplesRef = useRef<{ time: number; bytes: number }[]>([]);
-    const elapsedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     const isUploading = phase === 'uploading';
 
@@ -366,17 +369,8 @@ export default function UploadPage() {
         };
     }, []);
 
-    // Collect speed samples during upload (sliding 60s window)
-    useEffect(() => {
-        if (phase !== 'uploading') return;
-        const totalUploaded = archives.reduce((s, a) => s + a.uploadedBytes, 0);
-        const now = Date.now();
-        speedSamplesRef.current.push({ time: now, bytes: totalUploaded });
-        speedSamplesRef.current = speedSamplesRef.current.filter(s => s.time >= now - 60_000);
-    }, [archives, phase]);
-
     // -----------------------------------------------------------------------
-    // State helpers (always use functional updates to avoid stale closures)
+    // State helpers
     // -----------------------------------------------------------------------
 
     const setArchiveStatus = (archiveName: string, update: Partial<ArchiveState>) =>
@@ -411,7 +405,8 @@ export default function UploadPage() {
         e.preventDefault();
         dragCounterRef.current = 0;
         setIsDragActive(false);
-        if (phase !== 'idle' && phase !== 'setup') return;
+        const wasIdle = phase === 'idle';
+        if (!wasIdle && phase !== 'setup') return;
 
         const items = Array.from(e.dataTransfer.items);
         const dirEntries = items
@@ -419,11 +414,11 @@ export default function UploadPage() {
             .filter((entry): entry is FileSystemDirectoryEntry => !!entry && entry.isDirectory);
 
         if (!dirEntries.length) {
-            if (phase === 'idle') setScanError('No folders detected. Please drop one or more archive folders.');
+            if (wasIdle) setScanError('No folders detected. Please drop one or more archive folders.');
             return;
         }
 
-        if (phase === 'idle') {
+        if (wasIdle) {
             setScanError(null);
             setPhase('scanning');
         } else {
@@ -432,7 +427,7 @@ export default function UploadPage() {
 
         try {
             const newArchives = await processDroppedDirs(dirEntries);
-            if (phase === 'idle') {
+            if (wasIdle) {
                 setArchives(newArchives);
                 setHideSkipped(false);
                 setCurrentPage(1);
@@ -445,7 +440,7 @@ export default function UploadPage() {
                 });
             }
         } catch (err) {
-            if (phase === 'idle') {
+            if (wasIdle) {
                 setScanError(`Failed to scan folders: ${err instanceof Error ? err.message : String(err)}`);
                 setPhase('idle');
             }
@@ -470,43 +465,38 @@ export default function UploadPage() {
     // -----------------------------------------------------------------------
 
     /**
-     * Upload one archive as a single tar stream.
-     *
-     * Flow:
-     *   1. Hash every file sequentially (Web Crypto, updates per-file status).
-     *   2. Build tar Blob from File references — zero extra memory, files are not copied.
-     *   3. Upload via a single TUS session; per-file progress is derived from the
-     *      tar byte offset reported by TUS.
+     * Hash every file, build a tar Blob (zero-copy — files referenced, not buffered),
+     * and stream-upload via a single TUS session. Per-file progress is derived from
+     * the tar byte offset reported by TUS.
      */
-    const uploadArchiveAsTar = (archive: ArchiveState): Promise<void> =>
-        new Promise(async (resolve, reject) => {
-            // Step 1 — hash all files upfront (needed to build _manifest.json in the tar)
-            const manifest: Record<string, string> = {};
-            for (const f of archive.files) {
-                if (cancelledRef.current) return reject(new Error('cancelled'));
-                setArchives(prev => prev.map(a =>
-                    a.name !== archive.name ? a : {
-                        ...a,
-                        files: a.files.map(af =>
-                            af.relativePath === f.relativePath ? { ...af, status: 'hashing' } : af
-                        ),
-                    }
-                ));
-                manifest[f.relativePath] = await computeSha256(f.file);
-            }
+    const uploadArchiveAsTar = async (archive: ArchiveState): Promise<void> => {
+        // Bounded parallel hashing: many small PAR2 sidecars per archive make sequential
+        // hashing the dominant cost; concurrent subtle.digest calls pipeline reads + crypto.
+        const manifest: Record<string, string> = {};
+        const hashTasks = archive.files.map(f => async () => {
+            if (cancelledRef.current) throw new Error('cancelled');
+            setArchives(prev => prev.map(a =>
+                a.name !== archive.name ? a : {
+                    ...a,
+                    files: a.files.map(af =>
+                        af.relativePath === f.relativePath ? { ...af, status: 'hashing' } : af
+                    ),
+                }
+            ));
+            manifest[f.relativePath] = await computeSha256(f.file);
+        });
+        const hashResults = await runConcurrently(hashTasks, HASH_CONCURRENCY);
 
-            if (cancelledRef.current) return reject(new Error('cancelled'));
+        if (cancelledRef.current) throw new Error('cancelled');
+        const failedHash = hashResults.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+        if (failedHash) throw failedHash.reason;
 
-            // Step 2 — build tar Blob (near-instant; files referenced, not copied)
-            const { blob: tarBlob, fileInfos } = buildTarBlob(archive.files, manifest);
+        const { blob: tarBlob, fileInfos } = buildTarBlob(archive.files, manifest);
+        const infoByPath = new Map(fileInfos.map(fi => [fi.relativePath, fi]));
 
-            // Build a lookup map for O(1) access inside the progress callback
-            const infoByPath = new Map(fileInfos.map(fi => [fi.relativePath, fi]));
+        updateArchiveFiles(archive.name, af => ({ ...af, status: 'uploading', uploadedBytes: 0 }));
 
-            // Mark all files as uploading before TUS starts
-            updateArchiveFiles(archive.name, af => ({ ...af, status: 'uploading', uploadedBytes: 0 }));
-
-            // Step 3 — single TUS upload
+        return new Promise<void>((resolve, reject) => {
             const upload = new TusUpload(tarBlob, {
                 endpoint: `${config.serverPath}api/upload/tus/`,
                 chunkSize: 5 * 1024 * 1024,
@@ -515,23 +505,26 @@ export default function UploadPage() {
                 metadata: { archiveName: archive.name, uploadMode: 'tar' },
                 headers: authHeaders(),
                 onProgress: (uploadedTarBytes: number) => {
-                    // Derive per-file progress from tar byte position — single batched state update
                     setArchives(prev => prev.map(a => {
                         if (a.name !== archive.name) return a;
+                        let changed = false;
                         const files = a.files.map(af => {
                             const fi = infoByPath.get(af.relativePath);
                             if (!fi) return af;
                             const uploaded = Math.min(Math.max(0, uploadedTarBytes - fi.dataStart), fi.file.size);
                             const status: FileState['status'] = uploaded >= fi.file.size ? 'done'
                                 : uploaded > 0 ? 'uploading' : 'pending';
+                            if (uploaded === af.uploadedBytes && status === af.status) return af;
+                            changed = true;
                             return { ...af, uploadedBytes: uploaded, status };
                         });
+                        if (!changed) return a;
                         const uploadedBytes = files.reduce((s, af) => s + af.uploadedBytes, 0);
                         return { ...a, files, uploadedBytes };
                     }));
                 },
                 onSuccess: () => {
-                    // Ensure all files are marked done (covers rounding edge cases)
+                    // Force-mark everything done; rounding can leave the last file short of its size.
                     setArchives(prev => prev.map(a =>
                         a.name !== archive.name ? a : {
                             ...a,
@@ -553,6 +546,7 @@ export default function UploadPage() {
             activeUploadsRef.current.set(archive.name, upload);
             upload.start();
         });
+    };
 
     const startUpload = async () => {
         cancelledRef.current = false;
@@ -560,16 +554,18 @@ export default function UploadPage() {
         uploadStartTimeRef.current = Date.now();
         speedSamplesRef.current = [];
         setElapsedSeconds(0);
-        elapsedIntervalRef.current = setInterval(() =>
-            setElapsedSeconds(Math.floor((Date.now() - uploadStartTimeRef.current) / 1000)),
-            1000
-        );
+        elapsedIntervalRef.current = setInterval(() => {
+            const now = Date.now();
+            setElapsedSeconds(Math.floor((now - uploadStartTimeRef.current) / 1000));
+            const totalUploaded = archivesRef.current.reduce((s, a) => s + a.uploadedBytes, 0);
+            speedSamplesRef.current.push({ time: now, bytes: totalUploaded });
+            speedSamplesRef.current = speedSamplesRef.current.filter(s => s.time >= now - 60_000);
+        }, 1000);
 
         setPhase('uploading');
 
         const archivesToUpload = archives.filter(a => a.resolution !== 'skip' || !a.hasConflict);
 
-        // Mark skipped archives
         setArchives(prev => prev.map(a =>
             (a.hasConflict && a.resolution === 'skip') ? { ...a, status: 'skipped' } : a
         ));
@@ -635,7 +631,7 @@ export default function UploadPage() {
         }
         activeUploadsRef.current.clear();
 
-        const inProgress = archives.filter(a => a.status === 'uploading' || a.status === 'verifying');
+        const inProgress = archivesRef.current.filter(a => a.status === 'uploading' || a.status === 'verifying');
         await Promise.allSettled(
             inProgress.map(a => apiDelete(`upload/staging/${a.name}`).catch(() => {}))
         );
@@ -649,11 +645,11 @@ export default function UploadPage() {
     // -----------------------------------------------------------------------
 
     const cleanupFailed = async () => {
-        const failedArchives = archives.filter(a => a.status === 'failed');
+        const failedArchives = archivesRef.current.filter(a => a.status === 'failed');
         await Promise.allSettled(
             failedArchives.map(a => apiDelete(`upload/staging/${a.name}`).catch(() => {}))
         );
-        const remaining = archives.filter(a => a.status !== 'failed');
+        const remaining = archivesRef.current.filter(a => a.status !== 'failed');
         if (remaining.length === 0 || remaining.every(a => a.status === 'skipped')) {
             setArchives([]);
             setPhase('idle');
@@ -730,31 +726,16 @@ export default function UploadPage() {
         return { done, failed, skipped };
     };
 
-    // -----------------------------------------------------------------------
-    // Pagination helpers
-    // -----------------------------------------------------------------------
-
     const activeSetupArchives = archives.filter(a => !(a.hasConflict && a.resolution === 'skip'));
     const hasAnySkipped = archives.some(a => a.hasConflict && a.resolution === 'skip');
+    const visibleSetupArchives = hideSkipped ? activeSetupArchives : archives;
 
-    const visibleSetupArchives = hideSkipped
-        ? archives.filter(a => !(a.hasConflict && a.resolution === 'skip'))
-        : archives;
+    const paginate = <T,>(items: T[]): T[] =>
+        items.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
-    const setupPageItems = visibleSetupArchives.slice(
-        (currentPage - 1) * ITEMS_PER_PAGE,
-        currentPage * ITEMS_PER_PAGE
-    );
-
-    const uploadingPageItems = archives.slice(
-        (currentPage - 1) * ITEMS_PER_PAGE,
-        currentPage * ITEMS_PER_PAGE
-    );
-
-    const donePageItems = archives.slice(
-        (currentPage - 1) * ITEMS_PER_PAGE,
-        currentPage * ITEMS_PER_PAGE
-    );
+    const setupPageItems = paginate(visibleSetupArchives);
+    const uploadingPageItems = paginate(archives);
+    const donePageItems = paginate(archives);
 
     const renderPagination = (totalCount: number) =>
         totalCount > ITEMS_PER_PAGE ? (
@@ -780,7 +761,6 @@ export default function UploadPage() {
 
             {/* Scroll container — also the full-page drag target */}
             <Box
-                ref={pageContainerRef}
                 onDragEnter={handlePageDragEnter}
                 onDragLeave={handlePageDragLeave}
                 onDragOver={handlePageDragOver}

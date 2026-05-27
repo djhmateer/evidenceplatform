@@ -1,3 +1,5 @@
+import random
+import re
 import time
 from typing import Literal
 
@@ -10,7 +12,14 @@ def scroll_relation_to_bottom(
     scroll_delay: float = 0.8,
     max_stagnant: int = 5,
 ) -> None:
-    page.click(f"a[href$='/{relation}/']")
+    # Instagram has shipped variants where these buttons use either a real
+    # href (`/<user>/<relation>/`) or a placeholder `href="#"`. Match either
+    # the legacy href selector or any anchor whose accessible name contains
+    # the relation word as a whole word (case-insensitive).
+    relation_link = page.locator(
+        f"a[href$='/{relation}/'], a[role='link'], a[href='#']"
+    ).filter(has_text=re.compile(rf"\b{relation}\b", re.IGNORECASE)).first
+    relation_link.click()
     time.sleep(3)
 
     page.wait_for_selector("[role='dialog'][aria-modal='true']", timeout=15000)
@@ -21,7 +30,9 @@ def scroll_relation_to_bottom(
         if (!dialog) return document.body;
         for (const el of dialog.querySelectorAll('*')) {
             const oy = window.getComputedStyle(el).overflowY;
-            if (oy === 'scroll') return el;
+            if ((oy === 'scroll' || oy === 'auto') && el.scrollHeight > el.clientHeight) {
+                return el;
+            }
         }
         return dialog;
     }""")
@@ -33,7 +44,7 @@ def scroll_relation_to_bottom(
     stagnant = 0
     while stagnant < max_stagnant:
         scroll_container.evaluate("el => el.scrollBy(0, el.scrollHeight)")
-        time.sleep(scroll_delay)
+        time.sleep(random.uniform(scroll_delay * 0.6, scroll_delay * 1.6))
         new_height = scroll_container.evaluate("el => el.scrollHeight")
         if new_height == last_height:
             is_loading = page.locator("[data-visualcompletion='loading-state']").count() > 0

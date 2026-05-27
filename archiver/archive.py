@@ -29,6 +29,7 @@ from pydantic import BaseModel
 from archiver.dialogs import show_dialog_form, DialogForm, FormFieldText, FormFieldBool, FormSection
 from archiver.profile_registration import Profile
 from archiver.profile_selection import select_profile
+from archiver.summarizers import download_log as dl
 from archiver.summarizers.har_summary_generator import generate_entities_summary
 from extractors.extract_photos import PhotoAcquisitionConfig
 from extractors.extract_videos import VideoAcquisitionConfig
@@ -44,6 +45,52 @@ SCREEN_SIZE = tuple(pyautogui.size())
 commit_id = None
 branch = None
 load_dotenv()
+
+
+# Locking the recording dimensions deterministically so Playwright's per-page
+# MP4 (and the network video frames it embeds) isn't cropped by whatever the
+# context's default happens to be on a given Playwright/Firefox version.
+_VIEWPORT = {"width": 1280, "height": 720}
+
+# Navigating the main frame to this URL is the "safe finish" signal. It tells
+# the archiver "I'm done; finalize the HAR now, while Firefox is still alive."
+# Closing the Firefox window still works as a fallback, but has the rare
+# (~5%) HAR-finalization race against the dying browser process — use the
+# safe-finish URL when the archive matters.
+#
+# This is the single source of truth — _is_safe_finish_url derives its host
+# and path check from this value, so changing the URL here is enough; nothing
+# else needs editing. Pick a URL the operator can type from memory under
+# pressure but that is unlikely to be hit accidentally by browser-internal
+# requests during the session.
+_SAFE_FINISH_URL = "https://www.google.com/"
+_SAFE_FINISH_URL_PARSED = urlparse(_SAFE_FINISH_URL)
+
+
+def _is_safe_finish_url(url: str) -> bool:
+    """True iff `url` matches the configured safe-finish URL exactly.
+
+    Anchoring on `(scheme, host, path)` equality — not prefix — stops two
+    real false-positives a naive startswith match would accept:
+      * lookalike hosts (anything ending in the configured host suffix);
+      * other paths under the same host that can be reached from
+        sponsored / wrapped / redirected links inside a recorded session
+        (e.g. open-redirect endpoints, on-site search results, etc.) — a
+        startswith match would treat any of these as a finish trigger and
+        end the session mid-archive.
+
+    An empty `parsed.path` (Firefox sometimes drops the trailing slash when
+    auto-completing a bare host in the URL bar) is treated as equivalent to
+    the configured path's "/" form.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme != _SAFE_FINISH_URL_PARSED.scheme:
+        return False
+    if parsed.netloc != _SAFE_FINISH_URL_PARSED.netloc:
+        return False
+    configured_path = _SAFE_FINISH_URL_PARSED.path or "/"
+    actual_path = parsed.path or "/"
+    return actual_path == configured_path
 
 
 
@@ -216,6 +263,7 @@ class StorageConfig(BaseModel):
     p_download_media_not_in_structures: bool
     p_download_unfetched_media: bool
     p_download_highest_quality_assets_from_structures: bool
+    manually_curate_assets: bool = False
 
 
 def get_storage_config() -> Optional[StorageConfig]:
@@ -285,6 +333,16 @@ def get_storage_config() -> Optional[StorageConfig]:
                         )
                     ]
                 ),
+                FormSection(
+                    title="Post-Archiving Review",
+                    fields=[
+                        FormFieldBool(
+                            title="Pause to let me review the downloaded media in Explorer before sealing (delete unwanted files in videos/ or photos/; they won't be re-downloaded on subsequent runs)",
+                            key="manually_curate_assets",
+                            default_value=False
+                        )
+                    ]
+                ),
             ]
         )
     )
@@ -323,6 +381,8 @@ def merge_har_attachments(har_path: Path) -> Path:
     # Stream entries one-by-one so neither reader nor writer needs the full
     # document in memory at once.
     attachment_count = 0
+    missing_count = 0
+    missing_by_mime: dict[str, int] = {}
     with open(har_path, 'rb') as har_f, \
          open(temp_path, 'w', encoding='utf-8') as out_f:
 
@@ -359,6 +419,18 @@ def merge_har_attachments(har_path: Path) -> Path:
                     else:
                         content['text'] = base64.b64encode(body_bytes).decode('ascii')
                         content['encoding'] = 'base64'
+                else:
+                    # Playwright recorded a `_file` reference but the attachment
+                    # was never written to disk — almost always means
+                    # context.close() ran with this response's body still
+                    # streaming. Tally it and surface a loud warning at the
+                    # end of the merge; the worst outcome is silent body loss
+                    # going unnoticed (see commit history for the post-mortem
+                    # where ~91% of bodies were dropped without a single
+                    # operator-visible signal).
+                    missing_count += 1
+                    mime_key = content.get('mimeType', '?').split(';')[0]
+                    missing_by_mime[mime_key] = missing_by_mime.get(mime_key, 0) + 1
 
             if not first:
                 out_f.write(',')
@@ -368,11 +440,106 @@ def merge_har_attachments(har_path: Path) -> Path:
         out_f.write(']}}')
 
     # Move the merged HAR to the archive root and delete the whole workspace.
-    print(f"Merging HAR attachments into self-contained HAR ({attachment_count} attachments)...")
+    if missing_count:
+        pct_lost = missing_count * 100 // max(attachment_count, 1)
+        print(f"⚠️  Merging HAR: {attachment_count} attachments referenced, "
+              f"{missing_count} MISSING ({pct_lost}% of bodies lost).")
+        print("    Missing by MIME type (top contributors):")
+        for mime, n in sorted(missing_by_mime.items(), key=lambda kv: -kv[1])[:8]:
+            print(f"      {n:>5}  {mime}")
+        print("    This means Playwright finalized the HAR with `_file` "
+              "references whose attachment files were never written — "
+              "typically because context.close() ran while requests were "
+              "still in flight (X-button close is the usual culprit).")
+    else:
+        print(f"Merging HAR attachments into self-contained HAR ({attachment_count} attachments)...")
     temp_path.rename(final_path)
     shutil.rmtree(workspace_dir)
     print("HAR merge complete.")
     return final_path
+
+
+def _read_only_video_config() -> VideoAcquisitionConfig:
+    """Acquisition config that links files already on disk but never downloads
+    or reassembles anything. Used post-curation and from finalize_archive."""
+    return VideoAcquisitionConfig(
+        download_missing=False,
+        download_media_not_in_structures=False,
+        download_unfetched_media=False,
+        download_full_versions_of_fetched_media=False,
+        download_highest_quality_assets_from_structures=False,
+    )
+
+
+def _read_only_photo_config() -> PhotoAcquisitionConfig:
+    return PhotoAcquisitionConfig(
+        download_missing=False,
+        download_media_not_in_structures=False,
+        download_unfetched_media=False,
+        download_highest_quality_assets_from_structures=False,
+    )
+
+
+def protect_log_and_seal(archive_dir: Path) -> None:
+    """Protect downloaded_media_log.json (so the curation decisions are
+    committed to the seal) and then seal the archive."""
+    log_path = archive_dir / dl.LOG_FILENAME
+    if log_path.exists():
+        try:
+            protect_file(log_path)
+        except Exception as e:
+            traceback.print_exc()
+            print(f"❌ Error protecting download log: {e}")
+
+    try:
+        seal = seal_archive(archive_dir)
+        print(
+            f"Sealed archive: {seal.manifest_count} manifest(s), "
+            f"summary={seal.summary_path.name}, "
+            f"ots={'yes' if seal.ots_path else 'MISSING'}"
+        )
+    except Exception as e:
+        traceback.print_exc()
+        print(f"❌ Error sealing archive: {e}")
+
+
+def run_curation_pause(archive_dir: Path) -> None:
+    """
+    Open Explorer at the archive root, then block on terminal input until the
+    user signals they're done. Any files the user deletes from videos/ or
+    photos/ during the pause will stick across subsequent extraction runs via
+    downloaded_media_log.json.
+
+    Plain terminal input is intentionally used here rather than a Tk modal:
+    Tk windows opened immediately after os.startfile-launched Explorer tend
+    to lose the z-order race on Windows, and the terminal is always reachable.
+    """
+    try:
+        os.startfile(str(archive_dir))
+    except Exception as e:
+        print(f"⚠️  Could not auto-open archive folder ({archive_dir}): {e}")
+
+    print()
+    print("=" * 72)
+    print("  MANUAL CURATION")
+    print("=" * 72)
+    print(f"  Archive: {archive_dir}")
+    print()
+    print("  1. Explorer has been opened at the archive root.")
+    print("  2. Delete any files you don't want to keep from:")
+    print(f"       {archive_dir / 'videos'}")
+    print(f"       {archive_dir / 'photos'}")
+    print("     They will NOT be re-downloaded on subsequent extraction runs")
+    print("     (downloaded_media_log.json remembers what was already acquired).")
+    print("  3. Return to this terminal and press Enter when finished.")
+    print("=" * 72)
+    try:
+        input("  Press Enter to re-render the summary, prune orphans, and seal: ")
+    except EOFError:
+        # No interactive stdin (e.g. piped/automated run) — fall through and
+        # finish sealing rather than getting stuck.
+        print("  (stdin closed — proceeding without waiting)")
+    print("Manual curation complete.")
 
 
 def finish_recording(recording_thread: Optional[threading.Thread], archive_dir: Path, metadata: ArchiveSessionMetadata, stop_event=None, storage_config: Optional[StorageConfig] = None):
@@ -485,40 +652,48 @@ def finish_recording(recording_thread: Optional[threading.Thread], archive_dir: 
     #     generate_summary(har_path, archive_dir, metadata_dict, download_full_video=True)
     # except Exception:
     #     pass
+    video_config = VideoAcquisitionConfig(
+        download_missing=v_download_missing,
+        download_media_not_in_structures=v_download_media_not_in_structures,
+        download_unfetched_media=v_download_unfetched_media,
+        download_full_versions_of_fetched_media=v_download_full_versions_of_fetched_media,
+        download_highest_quality_assets_from_structures=v_download_highest_quality_assets_from_structures,
+    )
+    photo_config = PhotoAcquisitionConfig(
+        download_missing=p_download_missing,
+        download_media_not_in_structures=p_download_media_not_in_structures,
+        download_unfetched_media=p_download_unfetched_media,
+        download_highest_quality_assets_from_structures=p_download_highest_quality_assets_from_structures,
+    )
     try:
         generate_entities_summary(
             har_path,
             archive_dir,
             metadata_dict,
-            VideoAcquisitionConfig(
-                download_missing=v_download_missing,
-                download_media_not_in_structures=v_download_media_not_in_structures,
-                download_unfetched_media=v_download_unfetched_media,
-                download_full_versions_of_fetched_media=v_download_full_versions_of_fetched_media,
-                download_highest_quality_assets_from_structures=v_download_highest_quality_assets_from_structures
-            ),
-            PhotoAcquisitionConfig(
-                download_missing=p_download_missing,
-                download_media_not_in_structures=p_download_media_not_in_structures,
-                download_unfetched_media=p_download_unfetched_media,
-                download_highest_quality_assets_from_structures=p_download_highest_quality_assets_from_structures
-            )
+            video_config,
+            photo_config,
         )
     except Exception:
         traceback.print_exc()
 
-    # Seal the entire archive: a single manifests.json + .ots commits to every
-    # per-asset manifest hash. Replaces the per-asset .ots files used previously.
-    try:
-        seal = seal_archive(archive_dir)
-        print(
-            f"Sealed archive: {seal.manifest_count} manifest(s), "
-            f"summary={seal.summary_path.name}, "
-            f"ots={'yes' if seal.ots_path else 'MISSING'}"
-        )
-    except Exception as e:
-        traceback.print_exc()
-        print(f"❌ Error sealing archive: {e}")
+    if storage_config.manually_curate_assets:
+        try:
+            run_curation_pause(archive_dir)
+            # Read-only configs for the post-curation re-render: with
+            # download_missing=False, acquire_* won't reassemble files the
+            # user just deleted from HAR segments (which would silently undo
+            # the curation). It just relinks what's still on disk.
+            generate_entities_summary(
+                har_path,
+                archive_dir,
+                metadata_dict,
+                _read_only_video_config(),
+                _read_only_photo_config(),
+            )
+        except Exception:
+            traceback.print_exc()
+
+    protect_log_and_seal(archive_dir)
 
     print(f"Content archived successfully in {archive_dir}")
 
@@ -573,6 +748,8 @@ def archive_instagram_content(profile: Profile, target_url: str):
                 record_har_path=metadata.har_archive,
                 record_har_content="attach",
                 record_video_dir=archive_dir / "screen_recordings",
+                viewport=_VIEWPORT,
+                record_video_size=_VIEWPORT,
             )
 
             page = context.new_page()
@@ -587,11 +764,41 @@ def archive_instagram_content(profile: Profile, target_url: str):
                 # Navigate to the target URL
                 page.goto(target_url)
 
-                # Allow user to do whatever they want
+                # Allow user to do whatever they want. The session ends when
+                # the user either:
+                #   (a) navigates the main frame to the safe-finish URL
+                #       (configured via _SAFE_FINISH_URL above) →
+                #       wait_for_url returns cleanly. Firefox is still alive,
+                #       so context.close() below finalizes the HAR without
+                #       racing the dying browser process. Bonus: navigating
+                #       away from instagram.com aborts any in-flight IG
+                #       requests *before* context.close() runs, which makes
+                #       attachment loss strictly less likely than the
+                #       X-button path.
+                #   (b) closes the Firefox window → wait_for_url raises
+                #       "Target closed" / "Page closed", caught below. Same
+                #       behaviour as the legacy single-page approach with
+                #       the same residual ~5% HAR-finalization race.
+                #
+                # The whole session blocks inside one Playwright call, so the
+                # dispatcher fiber is pumped continuously — there's no risk
+                # of recreating the fiber-starvation body-loss bug we hit
+                # with the polling-loop GUI approach.
                 print(f"Archiving content from {target_url}")
-                page.wait_for_event("close", timeout=0)
+                print(f"To finish SAFELY (recommended for important archives): "
+                      f"navigate the browser to {_SAFE_FINISH_URL}")
+                print("Or close the Firefox window to finish (slightly less "
+                      "reliable — rare HAR-finalization race).")
+                page.wait_for_url(_is_safe_finish_url, timeout=0)
+                print(f"Safe-finish trigger detected ({_SAFE_FINISH_URL}); "
+                      f"closing context cleanly...")
             except Exception as e:
-                if "Target closed" in str(e) or "browser has disconnected" in str(e).lower():
+                # Playwright raises TargetClosedError on browser/page close
+                # with the message "Target page, context or browser has been
+                # closed" (see playwright._impl._errors.TargetClosedError).
+                # Match the substring that's actually present.
+                msg = str(e)
+                if "has been closed" in msg or "Target closed" in msg:
                     print("Browser shutdown detected, wrapping up archiving session...")
                 else:
                     print(f"Error during archiving: {e}")

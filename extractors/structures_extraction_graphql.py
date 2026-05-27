@@ -1,6 +1,6 @@
 from typing import Optional, Dict
 from pydantic import BaseModel
-from extractors.models import StoriesFeed, CommentsConnection
+from extractors.models import StoriesFeed, CommentsConnection, MediaShortcode
 from extractors.models_api_v1 import LikersApiV1
 from extractors.models_graphql import ProfileTimelineGraphQL, FriendsListGraphQL, ReelsMediaConnection, \
     ClipsUserConnection
@@ -15,6 +15,7 @@ class GraphQLResponse(BaseModel):
     stories_feed: Optional[StoriesFeed] = None
     comments_connection: Optional[CommentsConnection] = None
     likes: Optional[LikersApiV1] = None
+    post_shortcode: Optional[MediaShortcode] = None
 
 
 def extract_graphql_from_response(
@@ -84,6 +85,12 @@ def extract_graphql_from_response(
     except Exception as e:
         print(f"[graphql_response] Error parsing likes: {e}")
 
+    try:
+        if "xdt_api__v1__media__shortcode__web_info" in data:
+            res.post_shortcode = MediaShortcode(**data["xdt_api__v1__media__shortcode__web_info"])
+    except Exception as e:
+        print(f"[graphql_response] Error parsing post_shortcode: {e}")
+
     return res if any([
         res.profile_timeline,
         res.friends_list,
@@ -92,4 +99,5 @@ def extract_graphql_from_response(
         res.stories_feed,
         res.comments_connection,
         res.likes,
+        res.post_shortcode,
     ]) else None

@@ -52,6 +52,8 @@ const extractQueryFromParams = (searchParams: URLSearchParams): ISearchQuery => 
         page_size: Math.max(20, parseInt(searchParams.get('ps') || String(modeDefault), 10) || modeDefault),
         tag_ids: (searchParams.get('t') || '').split(',').map(Number).filter(n => !isNaN(n) && n > 0),
         tag_filter_mode: searchParams.get('tm') === 'all' ? 'all' : 'any',
+        sort_by: searchParams.get('sb') || null,
+        sort_order: searchParams.get('so') === 'asc' ? 'asc' : searchParams.get('so') === 'desc' ? 'desc' : null,
     };
 };
 
@@ -106,6 +108,10 @@ export default function SearchPage() {
         if (q.search_mode && q.search_mode !== 'accounts') params.append('sm', q.search_mode);
         if (q.tag_ids && q.tag_ids.length > 0) params.append('t', q.tag_ids.join(','));
         if (q.tag_ids && q.tag_ids.length > 1 && q.tag_filter_mode && q.tag_filter_mode !== 'any') params.append('tm', q.tag_filter_mode);
+        if (q.sort_by) {
+            params.append('sb', q.sort_by);
+            if (q.sort_order) params.append('so', q.sort_order);
+        }
         const newSearch = params.toString()
             .replaceAll('%28', '(').replaceAll('%29', ')').replaceAll('%27', "'")
             .replaceAll('%3A', ':').replaceAll('%3D', '=').replaceAll('%21', '!')

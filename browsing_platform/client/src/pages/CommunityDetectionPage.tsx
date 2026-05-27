@@ -23,6 +23,7 @@ import {
     Typography,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CloseIcon from '@mui/icons-material/Close';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
@@ -179,7 +180,8 @@ function KernelAccountPill({entry, communityDropdown, onRemove, onTagToggle}: Ke
             '&:hover': {borderColor: 'primary.main'},
             transition: 'border-color 0.15s',
         }}>
-            <Link href={`/account/${entry.account.id}`} underline="hover" color="primary.main"
+            <Link href={`/account/${entry.account.id}`} target="_blank" rel="noopener noreferrer"
+                  underline="hover" color="primary.main"
                   sx={{fontSize: '0.8125rem', lineHeight: 1.5, fontWeight: 500}}>
                 {entry.account.title}
             </Link>
@@ -262,7 +264,8 @@ function CandidateCard({
             {/* Content */}
             <Box sx={{flex: 1, minWidth: 0}}>
                 <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">
-                    <a href={`/account/${candidate.id}`} style={{textDecoration: 'none', color: 'inherit'}}>
+                    <a href={`/account/${candidate.id}`} target="_blank" rel="noopener noreferrer"
+                       style={{textDecoration: 'none', color: 'inherit'}}>
                         <Typography variant="subtitle1" sx={{
                             fontWeight: 600,
                             wordBreak: 'break-word',
@@ -406,6 +409,7 @@ export default function CommunityDetectionPage() {
 
     // Export / import
     const [importError, setImportError] = useState<string | null>(null);
+    const [copyFeedback, setCopyFeedback] = useState<{ severity: 'success' | 'error'; message: string } | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     React.useEffect(() => {
@@ -662,6 +666,38 @@ export default function CommunityDetectionPage() {
 
     // ── Export / import ───────────────────────────────────────────────────────
 
+    const copyKernelAsCsv = async () => {
+        const escapeCell = (v: string) =>
+            /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+        const rows: string[] = ['url,tags'];
+        let skipped = 0;
+        for (const entry of kernelEntries) {
+            const suffix = entry.account.metadata?.url_suffix as string | null | undefined;
+            if (!suffix) {
+                skipped++;
+                continue;
+            }
+            const url = `https://www.instagram.com/${suffix}/`;
+            const tags = entry.tagSources.map(t => t.name).join(';');
+            rows.push(`${escapeCell(url)},${escapeCell(tags)}`);
+        }
+        const csv = rows.join('\n');
+        try {
+            await navigator.clipboard.writeText(csv);
+            const copied = rows.length - 1;
+            const suffix = skipped > 0 ? ` (${skipped} skipped — no url_suffix)` : '';
+            setCopyFeedback({
+                severity: 'success',
+                message: `Copied ${copied} row${copied === 1 ? '' : 's'} to clipboard${suffix}`,
+            });
+        } catch (err) {
+            setCopyFeedback({
+                severity: 'error',
+                message: `Failed to copy: ${err instanceof Error ? err.message : String(err)}`,
+            });
+        }
+    };
+
     const exportState = () => {
         const state: CommunityStateExport = {
             version: 1,
@@ -770,6 +806,22 @@ export default function CommunityDetectionPage() {
                 >
                     <Alert severity="error" onClose={() => setImportError(null)} variant="filled">
                         {importError}
+                    </Alert>
+                </Snackbar>
+
+                {/* ── Clipboard feedback snackbar ───────────────────────────── */}
+                <Snackbar
+                    open={copyFeedback !== null}
+                    autoHideDuration={3000}
+                    onClose={() => setCopyFeedback(null)}
+                    anchorOrigin={{vertical: 'bottom', horizontal: 'center'}}
+                >
+                    <Alert
+                        severity={copyFeedback?.severity ?? 'success'}
+                        onClose={() => setCopyFeedback(null)}
+                        variant="filled"
+                    >
+                        {copyFeedback?.message}
                     </Alert>
                 </Snackbar>
 
@@ -972,17 +1024,33 @@ export default function CommunityDetectionPage() {
                             title="Kernel — Seed Accounts"
                             active={kernelEntries.length > 0}
                             action={
-                                <Tooltip title="Search and add accounts manually">
-                                    <Button
-                                        size="small"
-                                        variant={kernelEntries.length === 0 ? 'contained' : 'outlined'}
-                                        startIcon={<AddIcon/>}
-                                        onClick={() => setKernelModalOpen(true)}
-                                        sx={{flexShrink: 0}}
-                                    >
-                                        Add accounts
-                                    </Button>
-                                </Tooltip>
+                                <Stack direction="row" spacing={1}>
+                                    <Tooltip title="Copy kernel as CSV (url, tags)">
+                                        <span>
+                                            <Button
+                                                size="small"
+                                                variant="outlined"
+                                                startIcon={<ContentCopyIcon/>}
+                                                onClick={copyKernelAsCsv}
+                                                disabled={kernelEntries.length === 0}
+                                                sx={{flexShrink: 0}}
+                                            >
+                                                Copy to clipboard
+                                            </Button>
+                                        </span>
+                                    </Tooltip>
+                                    <Tooltip title="Search and add accounts manually">
+                                        <Button
+                                            size="small"
+                                            variant="contained"
+                                            startIcon={<AddIcon/>}
+                                            onClick={() => setKernelModalOpen(true)}
+                                            sx={{flexShrink: 0}}
+                                        >
+                                            Add accounts
+                                        </Button>
+                                    </Tooltip>
+                                </Stack>
                             }
                         />
 

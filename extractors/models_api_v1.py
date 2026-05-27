@@ -2,7 +2,7 @@ from typing import List, Optional, Any, Union
 
 from pydantic import ConfigDict, BaseModel, Field, field_validator
 
-from extractors.models import VideoVersion, InstagramImageVersions2
+from extractors.models import VideoVersion, InstagramImageVersions2, InstagramCarouselMedia
 
 
 def _str_id(v: Any) -> Any:
@@ -447,6 +447,8 @@ class MediaItemApiV1(BaseModel):
     has_audio: Optional[bool] = None
     clips_tab_pinned_user_ids: Optional[List[Any]] = None
     clips_metadata: Optional[dict] = None
+    carousel_media: Optional[List[InstagramCarouselMedia]] = None
+    carousel_media_count: Optional[int] = None
 
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 

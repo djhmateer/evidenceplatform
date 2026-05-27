@@ -4,19 +4,22 @@ import base64
 import os
 from hashlib import md5
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 from urllib import parse as urllib_parse
 
 import ijson
 import requests
 from pydantic import BaseModel
 
+from archiver.summarizers import download_log as dl
 from extractors.structures_extraction import StructureType
 from extractors.structures_extraction import structures_from_har
 from extractors.structures_extraction_api_v1 import ApiV1Response
 from extractors.structures_extraction_graphql import GraphQLResponse
 from extractors.structures_extraction_html import PageResponse
-from utils.integrity import FileIntegrity, protect_file
+from utils.integrity import FileIntegrity, protect_file, prune_orphan_sidecars
+
+OnLoggedMissingPhoto = Literal["use_har_bytes_only", "skip", "redownload"]
 
 
 def _safe_id(identifier: str, max_len: int = 60) -> str:
@@ -49,6 +52,11 @@ class PhotoAcquisitionConfig(BaseModel):
     download_media_not_in_structures: bool = True
     download_unfetched_media: bool = True
     download_highest_quality_assets_from_structures: bool = True
+    # Mirrors VideoAcquisitionConfig.on_logged_missing. Photos have no
+    # reassembly step (they're atomic), so "use_har_bytes_only" simply means
+    # `save_fetched_photo` is permitted but no CDN fetch. The default keeps
+    # user deletions sticky across re-extraction runs.
+    on_logged_missing: OnLoggedMissingPhoto = "use_har_bytes_only"
 
 
 # ---------- Helpers ----------
@@ -166,12 +174,25 @@ def extract_photos_from_structures(structures: list[StructureType]) -> list[Phot
                         media = edge.node.media
                         if media.image_versions2 and media.image_versions2.candidates:
                             register(media.pk, media.image_versions2.candidates[0].url)
+                # post_shortcode (single-post payload arriving via graphql)
+                if s.post_shortcode:
+                    for post in s.post_shortcode.items:
+                        if post.image_versions2 and post.image_versions2.candidates:
+                            register(post.pk, post.image_versions2.candidates[0].url)
+                        if post.carousel_media:
+                            for c in post.carousel_media:
+                                if c.image_versions2 and c.image_versions2.candidates:
+                                    register(c.pk, c.image_versions2.candidates[0].url)
 
             elif isinstance(s, ApiV1Response):
                 if s.media_info:
                     for item in s.media_info.items:
                         if item.image_versions2 and item.image_versions2.candidates:
                             register(item.pk, item.image_versions2.candidates[0].url)
+                        if item.carousel_media:
+                            for c in item.carousel_media:
+                                if c.image_versions2 and c.image_versions2.candidates:
+                                    register(c.pk, c.image_versions2.candidates[0].url)
 
             elif isinstance(s, PageResponse):
                 if s.posts:
@@ -288,13 +309,16 @@ def acquire_photos(
     structures: Optional[list[StructureType]] = None,
     config: PhotoAcquisitionConfig = PhotoAcquisitionConfig(),
     har_photo_maps: Optional[list['Photo']] = None,
+    download_log: Optional['dl.DownloadLog'] = None,
 ) -> list[Photo]:
     download_missing = config.download_missing
     download_media_not_in_structures = config.download_media_not_in_structures
     download_unfetched_media = config.download_unfetched_media
     download_full_assets_from_structures = config.download_highest_quality_assets_from_structures
+    on_logged_missing = config.on_logged_missing
 
     os.makedirs(output_dir, exist_ok=True)
+    prune_orphan_sidecars(Path(output_dir))
 
     existing = get_existing_photos(output_dir)
     har_photos = har_photo_maps if har_photo_maps is not None else extract_photo_maps(har_path)
@@ -321,11 +345,54 @@ def acquire_photos(
             print(f"Skipping image {photo.asset_id} as it already exists in the output directory.")
             photo.local_files = matching
 
+    def _photo_source(result_location: Optional[Path], photo: Photo) -> dl.PhotoSource:
+        if result_location is not None and result_location.name.startswith("photo_full_"):
+            return "full_asset"
+        return "har_image_bytes"
+
     for photo in combined.values():
+        # File already on disk → link normally and refresh the log entry.
         if photo.local_files:
+            if download_log is not None:
+                dl.upsert_photo(
+                    download_log,
+                    str(photo.asset_id),
+                    photo.local_files,
+                    _photo_source(photo.local_files[0], photo),
+                )
             continue
+
+        # download_missing=False means read-only pass — skip every acquisition
+        # branch, including HAR-bytes restoration.
         if not download_missing:
             continue
+
+        logged = (
+            download_log is not None
+            and str(photo.asset_id) in download_log.photos
+        )
+
+        if logged and on_logged_missing == "skip":
+            print(f"[log] Photo {photo.asset_id} is in the download log but missing on disk — skipping per on_logged_missing=skip.")
+            continue
+        if logged and on_logged_missing == "use_har_bytes_only":
+            if not photo.fetched_assets:
+                print(f"[log] Photo {photo.asset_id} is in the log but missing and no HAR bytes available — skipping (no CDN fetch under use_har_bytes_only).")
+                continue
+            print(f"[log] Photo {photo.asset_id} is in the log but missing — restoring from HAR bytes only (no CDN fetch).")
+            result = save_fetched_photo(photo, output_dir)
+            if result.location:
+                photo.local_files = [result.location]
+                if download_log is not None:
+                    dl.upsert_photo(
+                        download_log,
+                        str(photo.asset_id),
+                        photo.local_files,
+                        _photo_source(result.location, photo),
+                    )
+            continue
+
+        # Fresh acquisition path (not in log, or "redownload" override).
         skip = (
             (not download_media_not_in_structures and not photo.full_asset) or
             (not download_unfetched_media and not photo.fetched_assets)
@@ -341,6 +408,13 @@ def acquire_photos(
             if photo.local_files is None:
                 photo.local_files = []
             photo.local_files.append(result.location)
+            if download_log is not None:
+                dl.upsert_photo(
+                    download_log,
+                    str(photo.asset_id),
+                    photo.local_files,
+                    _photo_source(result.location, photo),
+                )
 
     return [p for p in combined.values() if p.local_files]
 

@@ -3,13 +3,13 @@ import tarfile
 import shutil
 from pathlib import Path
 from typing import Optional
-from zipfile import ZipFile, ZIP_DEFLATED
 
 import zstandard as zstd
 
 from root_anchor import ROOT_DIR
+from utils.integrity.par2 import create_recovery
 
-BATCH_SIZE_LIMIT = 10000 * 1024 * 1024
+BATCH_SIZE_LIMIT = 6000 * 1024 * 1024
 
 
 def get_size_bytes(start_path: Path):
@@ -24,58 +24,7 @@ def get_size_bytes(start_path: Path):
     return total_size
 
 
-def package_archives_zip():
-    root_archives = Path(ROOT_DIR) / "archives"
-    archive_dirs = [d for d in root_archives.iterdir() if d.is_dir()]
-
-    root_zips = Path(ROOT_DIR) / "utils" / "data_transfers" / "packaged_archives"
-    packaged_list_path = root_zips / "packaged_list.txt"
-    if packaged_list_path.exists():
-        with packaged_list_path.open("r", encoding="utf-8") as f:
-            already_packaged = set(line.strip() for line in f if line.strip())
-    else:
-        already_packaged = set()
-    batch_counter_path = root_zips / "batch_counter.txt"
-    if batch_counter_path.exists():
-        with batch_counter_path.open("r", encoding="utf-8") as f:
-            batch_counter = int(f.readline().strip())
-    else:
-        batch_counter = 0
-
-    to_archive: list[Path] = sorted(
-        [a for a in archive_dirs if a.name not in already_packaged],
-        key=lambda p: p.stat().st_ctime,
-    )
-    current_batch: list[Path] = []
-    current_batch_size = 0
-    for i in range(len(to_archive)):
-        a = to_archive[i]
-        print(f"processing {a.name}")
-        a_size = get_size_bytes(a)
-        print(f"size of {a.name} = {a_size}")
-        current_batch.append(a)
-        current_batch_size += a_size
-        if current_batch_size >= BATCH_SIZE_LIMIT or i == (len(to_archive) - 1):
-            print("starting new zip batch")
-            with ZipFile(root_zips / f'batch_{batch_counter}.zip', 'w', compresslevel=9, compression=ZIP_DEFLATED) as myzip:
-                for p in current_batch:
-                    print(f"adding {p.name}")
-                    for root, dirs, files in os.walk(p):
-                        for file in files:
-                            file_path = os.path.join(root, file)
-                            # Calculate the relative path within the zip archive
-                            arcname = os.path.relpath(file_path, p)
-                            myzip.write(file_path, arcname=os.path.join(p.name, arcname))
-            batch_counter += 1
-            with batch_counter_path.open("w", encoding="utf-8") as f:
-                f.write(str(batch_counter))
-            with packaged_list_path.open("a", encoding="utf-8") as f:
-                f.writelines([p.name + "\n" for p in current_batch])
-            current_batch = []
-            current_batch_size = 0
-
-
-def package_archives_zstd(single_archive: bool = False):
+def package_archives_zstd(max_batches: int = 0):
     root_archives = Path(ROOT_DIR) / "archives"
     archive_dirs = [d for d in root_archives.iterdir() if d.is_dir()]
 
@@ -99,6 +48,7 @@ def package_archives_zstd(single_archive: bool = False):
     )
     current_batch: list[Path] = []
     current_batch_size = 0
+    batches_created = 0
     for i in range(len(to_archive)):
         a = to_archive[i]
         print(f"processing {a.name}")
@@ -108,26 +58,44 @@ def package_archives_zstd(single_archive: bool = False):
         current_batch_size += a_size
         if current_batch_size >= BATCH_SIZE_LIMIT or i == (len(to_archive) - 1):
             print("starting new zstd batch")
-            with (root_zips / f'batch_{batch_counter}.tar').open('wb') as tar_file:
+            tar_path = root_zips / f'batch_{batch_counter}.tar'
+            zst_path = root_zips / f'batch_{batch_counter}.tar.zst'
+            bundle_path = root_zips / f'batch_{batch_counter}_with_par2.tar'
+            with tar_path.open('wb') as tar_file:
                 with tarfile.open(fileobj=tar_file, mode='w') as tar:
                     for p in current_batch:
                         print(f"adding {p.name}")
                         tar.add(p, arcname=p.name)
-            print(f"Created tar file for batch {batch_counter} with size {os.path.getsize(root_zips / f'batch_{batch_counter}.tar')} bytes")
-            with (root_zips / f'batch_{batch_counter}.tar').open('rb') as tar_file:
+            print(f"Created tar file for batch {batch_counter} with size {os.path.getsize(tar_path)} bytes")
+            with tar_path.open('rb') as tar_file:
                 cctx = zstd.ZstdCompressor(level=22)
-                with (root_zips / f'batch_{batch_counter}.tar.zst').open('wb') as zst_file:
+                with zst_path.open('wb') as zst_file:
                     print(f"Compressing batch {batch_counter} to zstd")
                     cctx.copy_stream(tar_file, zst_file)
-            os.remove(root_zips / f'batch_{batch_counter}.tar')
+            os.remove(tar_path)
+
+            print(f"Generating PAR2 recovery for batch {batch_counter} (10% redundancy)")
+            par2_files = create_recovery(zst_path, redundancy_pct=10)
+
+            print(f"Bundling {zst_path.name} + {len(par2_files)} par2 files into {bundle_path.name}")
+            with tarfile.open(bundle_path, mode='w') as bundle:
+                bundle.add(zst_path, arcname=zst_path.name)
+                for p in par2_files:
+                    bundle.add(p, arcname=p.name)
+
+            os.remove(zst_path)
+            for p in par2_files:
+                os.remove(p)
+
             batch_counter += 1
+            batches_created += 1
             with batch_counter_path.open("w", encoding="utf-8") as f:
                 f.write(str(batch_counter))
             with packaged_list_path.open("a", encoding="utf-8") as f:
                 f.writelines([p.name + "\n" for p in current_batch])
             current_batch = []
             current_batch_size = 0
-            if single_archive:
+            if max_batches and batches_created >= max_batches:
                 return
 
 
@@ -166,7 +134,14 @@ def clean_already_packaged_archives_zstd():
     for a in already_archived:
         shutil.move(a, pre_deletion_staging)
 
+    if os.name == "nt":
+        os.startfile(pre_deletion_staging)
+
 
 if __name__ == "__main__":
-    clean_already_packaged_archives_zstd()
-    # package_archives_zstd(single_archive=input("Create a single batch? y/n ").strip()=="y")
+    raw = input("How many batches to create? (0 or empty = all, 'clean' = move already-packaged archives to staging) ").strip()
+    if raw.lower() == "clean":
+        clean_already_packaged_archives_zstd()
+    else:
+        max_batches = int(raw) if raw else 0
+        package_archives_zstd(max_batches=max_batches)

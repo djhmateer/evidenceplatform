@@ -14,6 +14,7 @@ import ijson
 import requests
 from pydantic import BaseModel, field_validator
 
+from archiver.summarizers import download_log as dl
 from extractors.models import VideoVersion
 from extractors.structures_extraction import StructureType, structures_from_har
 
@@ -26,7 +27,9 @@ def _safe_id(identifier: str, max_len: int = 60) -> str:
 from extractors.structures_extraction_api_v1 import ApiV1Response
 from extractors.structures_extraction_graphql import GraphQLResponse
 from extractors.structures_extraction_html import PageResponse
-from utils.integrity import FileIntegrity, protect_file
+from utils.integrity import FileIntegrity, protect_file, prune_orphan_sidecars
+
+OnLoggedMissingVideo = Literal["reassemble_from_har_only", "skip", "redownload"]
 
 
 class MediaSegment(BaseModel):
@@ -228,10 +231,17 @@ def _build_filename_xpv_map(structures: list[StructureType]) -> dict[str, str]:
                 for edge in s.clips_user_connection.edges:
                     m = edge.node.media
                     _process(m.video_versions, getattr(m, 'video_dash_manifest', None), m.pk)
+            if s.post_shortcode:
+                for post in s.post_shortcode.items:
+                    _process(post.video_versions, getattr(post, 'video_dash_manifest', None), post.pk)
+                    for ci in (post.carousel_media or []):
+                        _process(ci.video_versions, getattr(ci, 'video_dash_manifest', None), ci.pk)
         elif isinstance(s, ApiV1Response):
             if s.media_info:
                 for item in s.media_info.items:
                     _process(item.video_versions, getattr(item, 'video_dash_manifest', None), item.pk)
+                    for ci in (item.carousel_media or []):
+                        _process(ci.video_versions, getattr(ci, 'video_dash_manifest', None), ci.pk)
         elif isinstance(s, PageResponse):
             if s.posts:
                 for post in s.posts.items:
@@ -706,10 +716,19 @@ def extract_videos_from_structures(structures: list[StructureType]) -> list[Vide
             if s.clips_user_connection:
                 for edge in s.clips_user_connection.edges:
                     _store(edge.node.media.pk, edge.node.media.video_versions, edge.node.media)
+            if s.post_shortcode:
+                for post in s.post_shortcode.items:
+                    _store(post.pk, post.video_versions, post)
+                    if post.carousel_media:
+                        for carousel_item in post.carousel_media:
+                            _store(carousel_item.pk, carousel_item.video_versions, carousel_item)
         elif isinstance(s, ApiV1Response):
             if s.media_info:
                 for item in s.media_info.items:
                     _store(item.pk, item.video_versions, item)
+                    if item.carousel_media:
+                        for carousel_item in item.carousel_media:
+                            _store(carousel_item.pk, carousel_item.video_versions, carousel_item)
         elif isinstance(s, PageResponse):
             if s.posts:
                 for post in s.posts.items:
@@ -808,11 +827,21 @@ def download_full_asset(video: Video, output_dir: Path) -> AssetSaveResult:
 
 
 class VideoAcquisitionConfig(BaseModel):
-    download_missing: bool = True,
-    download_media_not_in_structures: bool = True,
-    download_unfetched_media: bool = True,
-    download_full_versions_of_fetched_media: bool = True,
-    download_highest_quality_assets_from_structures: bool = True,
+    download_missing: bool = True
+    download_media_not_in_structures: bool = True
+    download_unfetched_media: bool = True
+    download_full_versions_of_fetched_media: bool = True
+    download_highest_quality_assets_from_structures: bool = True
+    # What to do when an asset's file is missing on disk but its id appears in
+    # downloaded_media_log.json (i.e. the archiver has acquired it before and
+    # the user almost certainly deleted it on purpose):
+    #   "reassemble_from_har_only" — don't touch the CDN; reassemble from HAR
+    #       segments if available, otherwise skip.
+    #   "skip"                     — don't acquire at all.
+    #   "redownload"               — ignore the log entry; treat as fresh
+    #       acquisition (full network fetch allowed, subject to the other flags).
+    # The default keeps user deletions sticky across re-extraction runs.
+    on_logged_missing: OnLoggedMissingVideo = "reassemble_from_har_only"
 
 
 def acquire_videos(
@@ -821,6 +850,7 @@ def acquire_videos(
         structures: Optional[list[StructureType]] = None,
         config: VideoAcquisitionConfig = VideoAcquisitionConfig(),
         har_video_maps: Optional[list['Video']] = None,
+        download_log: Optional['dl.DownloadLog'] = None,
 ) -> list[Video]:
     # unpack the config
     download_missing = config.download_missing
@@ -828,9 +858,14 @@ def acquire_videos(
     download_unfetched_media = config.download_unfetched_media
     download_full_versions_of_fetched_media = config.download_full_versions_of_fetched_media
     download_highest_quality_assets_from_structures = config.download_highest_quality_assets_from_structures
+    on_logged_missing = config.on_logged_missing
 
     # Create the output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
+
+    # Drop manifest/par2 sidecars whose primary asset is gone (user deleted
+    # files between runs). Keeps the eventual seal manifest clean.
+    prune_orphan_sidecars(Path(output_dir))
 
     existing_videos = get_existing_videos(output_dir)
 
@@ -892,32 +927,105 @@ def acquire_videos(
             video.local_files = matching
             continue
 
+    def _matched_source(result: AssetSaveResult, video: Video) -> dl.VideoSource:
+        # Best-effort categorisation of which acquisition path produced the file.
+        loc = result.location
+        if loc is not None:
+            name = loc.name
+            if name.endswith('_full.mp4') and '_full_track' not in name:
+                return "full_asset"
+            if '_har_segments' in name:
+                return "har_segments"
+            if '_full_track' in name:
+                return "har_full_track"
+        # Fallback: infer from what's present on the video object.
+        if video.full_asset:
+            return "full_asset"
+        return "har_segments"
+
     for video in combined_videos:
-        if video.local_files is None or len(video.local_files) == 0:
-            if download_missing:
-                download_result = AssetSaveResult(success=False)
-                skip_video = (
-                        (not download_media_not_in_structures and not video.full_asset) or
-                        (not download_unfetched_media and not video.fetched_tracks)
+        # File already on disk → link normally and refresh the log entry.
+        if video.local_files is not None and len(video.local_files) > 0:
+            if download_log is not None:
+                dl.upsert_video(
+                    download_log,
+                    video.xpv_asset_id,
+                    video.local_files,
+                    _matched_source(AssetSaveResult(location=video.local_files[0]), video),
                 )
-                if skip_video:
-                    continue
-                if (
-                        (not download_result.success) and
-                        download_highest_quality_assets_from_structures and
-                        video.full_asset
-                ):
-                    download_result = download_full_asset(video, output_dir)
-                if (
-                        (not download_result.success) and video.fetched_tracks
-                ):
-                    download_result = save_fetched_asset(video, output_dir, download_full_track=download_full_versions_of_fetched_media)
-            else:
+            continue
+
+        # download_missing=False means "read-only pass, do not write anything
+        # new to disk" — used by db_loaders stage C. Skip every acquisition
+        # branch, including the reassembly fallback.
+        if not download_missing:
+            continue
+
+        logged = (
+            download_log is not None
+            and video.xpv_asset_id in download_log.videos
+        )
+
+        # User previously curated this asset away (file missing + in log).
+        # Apply the configured policy.
+        if logged and on_logged_missing == "skip":
+            print(f"[log] Video {video.xpv_asset_id} is in the download log but missing on disk — skipping per on_logged_missing=skip.")
+            continue
+        if logged and on_logged_missing == "reassemble_from_har_only":
+            if not video.fetched_tracks:
+                print(f"[log] Video {video.xpv_asset_id} is in the log but missing and no HAR segments available — skipping (no CDN fetch under reassemble_from_har_only).")
                 continue
+            print(f"[log] Video {video.xpv_asset_id} is in the log but missing — reassembling from HAR segments only (no CDN fetch).")
+            download_result = save_fetched_asset(
+                video,
+                output_dir,
+                download_full_track=download_full_versions_of_fetched_media,
+            )
             if download_result.location is not None:
-                if video.local_files is None:
-                    video.local_files = []
-                video.local_files.append(download_result.location)
+                video.local_files = [download_result.location]
+                if download_log is not None:
+                    dl.upsert_video(
+                        download_log,
+                        video.xpv_asset_id,
+                        video.local_files,
+                        _matched_source(download_result, video),
+                    )
+            continue
+
+        # Fresh acquisition path: either id is not in the log at all, or the
+        # caller asked for a forced redownload.
+        download_result = AssetSaveResult(success=False)
+        skip_video = (
+            (not download_media_not_in_structures and not video.full_asset) or
+            (not download_unfetched_media and not video.fetched_tracks)
+        )
+        if skip_video:
+            continue
+        if (
+            (not download_result.success) and
+            download_highest_quality_assets_from_structures and
+            video.full_asset
+        ):
+            download_result = download_full_asset(video, output_dir)
+        if (
+            (not download_result.success) and video.fetched_tracks
+        ):
+            download_result = save_fetched_asset(
+                video,
+                output_dir,
+                download_full_track=download_full_versions_of_fetched_media,
+            )
+        if download_result.location is not None:
+            if video.local_files is None:
+                video.local_files = []
+            video.local_files.append(download_result.location)
+            if download_log is not None:
+                dl.upsert_video(
+                    download_log,
+                    video.xpv_asset_id,
+                    video.local_files,
+                    _matched_source(download_result, video),
+                )
 
     stored_videos = []
     for video in combined_videos:

@@ -87,7 +87,7 @@ def get_account_tags_for_post_comments(post_ids: list[int]) -> dict[int, list[IT
         return {}
     args, clause = _build_in_clause(post_ids)
     rows = db.execute_query(
-        f"""SELECT at.account_id AS entity_id, t.*, at.notes AS assignment_notes,
+        f"""SELECT DISTINCT at.account_id AS entity_id, t.*, at.notes AS assignment_notes,
                    tt.name AS tag_type_name, tt.description AS tag_type_description,
                    tt.notes AS tag_type_notes, tt.entity_affinity AS tag_type_entity_affinity
             FROM account_tag at
@@ -146,7 +146,7 @@ def get_account_tags_for_tagged_accounts(post_ids: list[int]) -> dict[int, list[
         return {}
     args, clause = _build_in_clause(post_ids)
     rows = db.execute_query(
-        f"""SELECT at.account_id AS entity_id, t.*, at.notes AS assignment_notes,
+        f"""SELECT DISTINCT at.account_id AS entity_id, t.*, at.notes AS assignment_notes,
                    tt.name AS tag_type_name, tt.description AS tag_type_description,
                    tt.notes AS tag_type_notes, tt.entity_affinity AS tag_type_entity_affinity
             FROM account_tag at

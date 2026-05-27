@@ -330,6 +330,7 @@ class StoryBlokSticker(BaseModel):
 class HighlightsReelUser(BaseModel):
     pk: str
     id: str
+    username: Optional[str] = None
     interop_messaging_user_fbid: Optional[Any] = None
 
     model_config = ConfigDict(populate_by_name=True, extra="allow")

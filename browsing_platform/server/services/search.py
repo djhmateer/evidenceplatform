@@ -26,6 +26,8 @@ class ISearchQuery(BaseModel):
     page_size: int
     tag_ids: Optional[list[int]] = None
     tag_filter_mode: Optional[Literal["any", "all"]] = None
+    sort_by: Optional[str] = None
+    sort_order: Optional[Literal["asc", "desc"]] = None
 
 
 class SearchResultTransform(BaseModel):
@@ -73,6 +75,27 @@ def default_fulltext_query(search_term: Optional[str]) -> Optional[str]:
     if "+" in search_term or "-" in search_term or "*" in search_term:
         return search_term
     return " ".join([f'+"{word}"' for word in search_term.split() if word])
+
+
+# Whitelist of user-selectable sort columns per search mode. Values are table-qualified to
+# match where each ORDER BY is injected (accounts: outer query on `account`;
+# posts/media: inner subquery on `post`/`media`).
+SORTABLE_COLUMNS: dict[str, dict[str, str]] = {
+    "accounts": {"id": "account.id", "url_suffix": "account.url_suffix", "display_name": "account.display_name"},
+    "posts":    {"id": "post.id", "publication_date": "post.publication_date"},
+    "media":    {"id": "media.id", "publication_date": "media.publication_date"},
+}
+
+
+def resolve_order_by(search_mode: str, sort_by: Optional[str], sort_order: Optional[str], fallback: str) -> str:
+    """Return an ORDER BY expression for an explicit user sort, or `fallback` when none/invalid.
+    The column expression is taken only from the SORTABLE_COLUMNS whitelist and the direction is
+    clamped to ASC/DESC, so the result is injection-safe (consistent with sanitize_column)."""
+    cols = SORTABLE_COLUMNS.get(search_mode, {})
+    if sort_by and sort_by in cols:
+        direction = "ASC" if (sort_order or "").lower() == "asc" else "DESC"
+        return f"{cols[sort_by]} {direction}"
+    return fallback
 
 
 def search_archive_sessions(query: ISearchQuery, search_results_transform: SearchResultTransform) -> list[SearchResult]:
@@ -276,6 +299,7 @@ def search_accounts(query: ISearchQuery, search_results_transform: SearchResultT
         "MATCH(`url_suffix`, `url_parts`, `bio`, `display_name`) AGAINST (%(search_term)s IN BOOLEAN MODE) DESC"
         if has_fulltext else "account.id DESC"
     )
+    order_by = resolve_order_by("accounts", query.sort_by, query.sort_order, order_by)
     rows = db.execute_query(  # nosec B608 - tag_filter_join built from safe templates only
         f"""SELECT account.id, account.url_suffix, account.platform, account.display_name, account.bio
            FROM account
@@ -355,6 +379,7 @@ def search_posts(query: ISearchQuery, search_results_transform: SearchResultTran
         "MATCH(`url_suffix`, `caption`) AGAINST (%(search_term)s IN BOOLEAN MODE) DESC"
         if has_fulltext else "publication_date DESC"
     )
+    order_by = resolve_order_by("posts", query.sort_by, query.sort_order, order_by)
     rows = db.execute_query(  # nosec B608 - inner_where, order_by, tag_filter_join built from safe clauses only
         f"""SELECT p.id, p.url_suffix, p.platform, p.id_on_platform, p.caption, p.publication_date,
                    a.display_name AS account_display_name, a.url_suffix AS account_url_suffix, a.platform AS account_platform
@@ -431,7 +456,8 @@ def search_media(query: ISearchQuery, search_results_transform: SearchResultTran
         tag_filter_join, tag_filter_args = build_tag_filter_join("media", query.tag_ids, query.tag_filter_mode or "any")
         query_args.update(tag_filter_args)
     inner_where = ' AND '.join(where_clauses)
-    rows = db.execute_query(  # nosec B608 - inner_where and tag_filter_join built from safe clauses only
+    order_by = resolve_order_by("media", query.sort_by, query.sort_order, "media.id DESC")
+    rows = db.execute_query(  # nosec B608 - inner_where, order_by and tag_filter_join built from safe clauses only
         f"""SELECT m.id, m.thumbnail_path, m.local_url, m.aspect_ratio, m.media_type, m.publication_date,
                    a.display_name AS account_display_name, a.url_suffix AS account_url_suffix, a.platform AS account_platform
            FROM (
@@ -439,7 +465,7 @@ def search_media(query: ISearchQuery, search_results_transform: SearchResultTran
                FROM media
                {tag_filter_join}
                WHERE {inner_where}
-               ORDER BY media.id DESC
+               ORDER BY {order_by}
                LIMIT %(limit)s OFFSET %(offset)s
            ) m
            LEFT JOIN account a ON m.account_id = a.id""",
