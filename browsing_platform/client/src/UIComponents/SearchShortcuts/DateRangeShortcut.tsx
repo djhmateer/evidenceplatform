@@ -1,7 +1,15 @@
 import React from 'react';
 import {Stack} from '@mui/material';
 import {DatePicker} from '@mui/x-date-pickers/DatePicker';
+import {PickerChangeHandlerContext, DateValidationError} from '@mui/x-date-pickers';
 import dayjs, {Dayjs} from 'dayjs';
+
+// No archived content predates 2000, so we treat any earlier date as invalid. This is what
+// makes keyboard entry usable: while typing a 4-digit year (e.g. "2025"), every intermediate
+// value ("0002", "0020", "0202") is < 2000 and is reported by the picker as a minDate
+// validation error — so we don't commit a half-typed year as a search. The full year only
+// validates once complete, because no prefix of a 4-digit year >= 2000 is itself >= 2000.
+const MIN_DATE = dayjs('2000-01-01');
 import {MuiConfig, Utils} from '@react-awesome-query-builder/mui';
 import {ADVANCED_FILTERS_CONFIG, T_Search_Mode} from '../../services/DataFetcher';
 import {SearchShortcutsProps} from './AccountSearchShortcuts';
@@ -66,7 +74,11 @@ function DateRangeShortcut({tree, onChange, field, mode, fromLabel = "From", toL
     const fromValue: Dayjs | null = fromStr ? dayjs(fromStr) : null;
     const toValue: Dayjs | null = toStr ? dayjs(toStr) : null;
 
-    const handleFromChange = (val: Dayjs | null) => {
+    const handleFromChange = (val: Dayjs | null, context: PickerChangeHandlerContext<DateValidationError>) => {
+        // Ignore in-progress/invalid input (incomplete date, year < 2000, etc.) so we don't
+        // commit a search — and remount the page out from under the input — before the user
+        // has finished typing. A genuine clear (null value, no error) still removes the bound.
+        if (context.validationError) return;
         let newLogic: any;
         if (!val || !val.isValid()) {
             newLogic = removeDateBound(logic, field, ">=") ?? null;
@@ -76,7 +88,8 @@ function DateRangeShortcut({tree, onChange, field, mode, fromLabel = "From", toL
         onChange(newLogic);
     };
 
-    const handleToChange = (val: Dayjs | null) => {
+    const handleToChange = (val: Dayjs | null, context: PickerChangeHandlerContext<DateValidationError>) => {
+        if (context.validationError) return;
         let newLogic: any;
         if (!val || !val.isValid()) {
             newLogic = removeDateBound(logic, field, "<=") ?? null;
@@ -93,6 +106,7 @@ function DateRangeShortcut({tree, onChange, field, mode, fromLabel = "From", toL
                 value={fromValue}
                 onChange={handleFromChange}
                 format="DD/MM/YYYY"
+                minDate={MIN_DATE}
                 slotProps={{textField: {size: "small"}}}
             />
             <DatePicker
@@ -100,6 +114,7 @@ function DateRangeShortcut({tree, onChange, field, mode, fromLabel = "From", toL
                 value={toValue}
                 onChange={handleToChange}
                 format="DD/MM/YYYY"
+                minDate={MIN_DATE}
                 slotProps={{textField: {size: "small"}}}
             />
         </Stack>

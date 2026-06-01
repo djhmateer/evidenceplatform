@@ -8,4 +8,6 @@ export interface SearchResultsProps {
     onToggleSelected?: (id: number) => void;
     // When set, clicking the result calls this instead of navigating to the entity page
     onPrimaryClick?: (result: SearchResult) => void;
+    // Desktop-only: render larger cells and auto-load full-res assets on scroll (media results)
+    largeIcons?: boolean;
 }

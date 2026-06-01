@@ -1,4 +1,5 @@
 import React, {useMemo, useRef, useState} from 'react';
+import {useSearchParams} from 'react-router';
 import {
     Alert,
     Box,
@@ -43,6 +44,7 @@ import {
     CommunityCandidatesResponse,
     DEFAULT_TIE_WEIGHTS,
     fetchCommunityCandidates,
+    fetchRelatedTagStats,
     fetchTagKernelAccounts,
     fetchTagsForSearchResults,
     ISearchQuery,
@@ -53,11 +55,14 @@ import {
     Thumbnail,
     TieWeights,
 } from '../services/DataFetcher';
-import {IQuickAccessTypeDropdown, ITagWithType} from '../types/tags';
+import {IQuickAccessTypeDropdown, ITagStat, ITagWithType} from '../types/tags';
+import RelatedTagDistributionTable from '../UIComponents/Tags/RelatedTagDistributionTable';
 import {downloadTextFile} from '../services/utils';
 
 const EMPTY_ID_SET = new Set<number>();
 const COMMUNITY_TAG_PLACEHOLDER = 'Assign Community Tag';
+const BASE_TITLE = 'Community Detection | Browsing Platform';
+const COMMUNITY_TAG_PARAM = 'communityTag';
 const stripThumbnails = <T extends { thumbnails?: Thumbnail[] }>(obj: T): T => ({...obj, thumbnails: []});
 
 // ── Serialisable state (export / import) ──────────────────────────────────────
@@ -103,7 +108,7 @@ function tagKernelAccountToSearchResult(a: TagKernelAccount): SearchResult {
         title: candidateTitle(a),
         details: a.bio ?? undefined,
         thumbnails: a.thumbnails,
-        metadata: {media_count: a.media_count},
+        metadata: {media_count: a.media_count, url_suffix: a.url_suffix, display_name: a.display_name},
     };
 }
 
@@ -224,6 +229,9 @@ interface CandidateCardProps {
     onAddToKernel: () => void;
     onExclude: () => void;
     onTagToggle: (tag: ITagWithType) => void;
+    tagDistribution?: ITagStat[];
+    tagDistributionLoading: boolean;
+    onTagDistributionOpen: () => void;
 }
 
 function CandidateCard({
@@ -232,7 +240,10 @@ function CandidateCard({
                            assignedCommunityTagIds,
                            onAddToKernel,
                            onExclude,
-                           onTagToggle
+                           onTagToggle,
+                           tagDistribution,
+                           tagDistributionLoading,
+                           onTagDistributionOpen,
                        }: CandidateCardProps) {
     const title = candidateTitle(candidate);
     const score = candidate.score % 1 === 0
@@ -241,25 +252,61 @@ function CandidateCard({
     return (
         <Stack direction="row" gap={2} alignItems="flex-start" sx={{py: 0.5}}>
             {/* Score column */}
-            <Box sx={{
-                flexShrink: 0, width: 56, textAlign: 'center',
-                pt: 0.5, borderRight: '1px solid', borderColor: 'divider', pr: 2,
-            }}>
-                <Typography variant="h5"
-                            sx={{fontWeight: 700, lineHeight: 1, color: 'primary.main', fontSize: '1.5rem'}}>
-                    {score}
-                </Typography>
-                <Typography variant="caption" sx={{
-                    color: 'text.disabled',
-                    display: 'block',
-                    mt: 0.25,
-                    letterSpacing: '0.05em',
-                    textTransform: 'uppercase',
-                    fontSize: '0.6rem'
+            <Tooltip
+                arrow
+                placement="right"
+                enterDelay={100}
+                leaveDelay={100}
+                onOpen={onTagDistributionOpen}
+                slotProps={{
+                    tooltip: {
+                        sx: {
+                            bgcolor: 'background.paper',
+                            color: 'text.primary',
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            boxShadow: 3,
+                            maxWidth: 'none',
+                        },
+                    },
+                    arrow: {
+                        sx: {
+                            color: 'background.paper',
+                            '&::before': {
+                                border: '1px solid',
+                                borderColor: 'divider',
+                                boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
+                            },
+                        },
+                    },
+                }}
+                title={
+                    tagDistributionLoading
+                        ? <CircularProgress size={16}/>
+                        : <RelatedTagDistributionTable stats={tagDistribution ?? []}/>
+                }
+            >
+                <Box sx={{
+                    flexShrink: 0, width: 56, textAlign: 'center',
+                    pt: 0.5, borderRight: '1px solid', borderColor: 'divider', pr: 2,
+                    cursor: 'help',
                 }}>
-                    score
-                </Typography>
-            </Box>
+                    <Typography variant="h5"
+                                sx={{fontWeight: 700, lineHeight: 1, color: 'primary.main', fontSize: '1.5rem'}}>
+                        {score}
+                    </Typography>
+                    <Typography variant="caption" sx={{
+                        color: 'text.disabled',
+                        display: 'block',
+                        mt: 0.25,
+                        letterSpacing: '0.05em',
+                        textTransform: 'uppercase',
+                        fontSize: '0.6rem'
+                    }}>
+                        score
+                    </Typography>
+                </Box>
+            </Tooltip>
 
             {/* Content */}
             <Box sx={{flex: 1, minWidth: 0}}>
@@ -403,6 +450,20 @@ export default function CommunityDetectionPage() {
     const [isComputing, setIsComputing] = useState(false);
     const [hasRun, setHasRun] = useState(false);
 
+    // Lazy-loaded, cached tag distribution shown in each candidate's score tooltip.
+    // Cleared whenever a new analysis is run (see runAnalysis).
+    const [candidateTagDistributions, setCandidateTagDistributions] = useState<Record<number, ITagStat[]>>({});
+    const [loadingTagDistributions, setLoadingTagDistributions] = useState<Record<number, boolean>>({});
+
+    const loadCandidateTagDistribution = (candidateId: number) => {
+        if (candidateTagDistributions[candidateId] || loadingTagDistributions[candidateId]) return;
+        setLoadingTagDistributions(prev => ({...prev, [candidateId]: true}));
+        fetchRelatedTagStats(candidateId).then(stats => {
+            setCandidateTagDistributions(prev => ({...prev, [candidateId]: stats}));
+            setLoadingTagDistributions(prev => ({...prev, [candidateId]: false}));
+        });
+    };
+
     // Excluded accounts
     const [excludedAccounts, setExcludedAccounts] = useState<CandidateAccount[]>([]);
     const [excludedOpen, setExcludedOpen] = useState(false);
@@ -412,9 +473,66 @@ export default function CommunityDetectionPage() {
     const [copyFeedback, setCopyFeedback] = useState<{ severity: 'success' | 'error'; message: string } | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    // URL state: the selected community tag id is reflected in the `communityTag`
+    // search param (absent when no tag is selected).
+    const [searchParams, setSearchParams] = useSearchParams();
+    const initializedFromUrl = useRef(false);
+
+    // Initialize the community tag from the URL on first load. With no param the
+    // tag stays null; with a valid id we resolve the full tag from the tag-kernel
+    // dropdown (which always contains the tag itself) and seed the kernel from it.
     React.useEffect(() => {
-        document.title = 'Community Detection | Browsing Platform';
+        const raw = searchParams.get(COMMUNITY_TAG_PARAM);
+        const tagId = raw !== null ? parseInt(raw, 10) : NaN;
+        if (Number.isNaN(tagId)) {
+            initializedFromUrl.current = true;
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            setTagTransitionLoading(true);
+            try {
+                const resp: TagKernelResponse = await fetchTagKernelAccounts(tagId);
+                if (cancelled) return;
+                const tag = resp.dropdown.tags.find(t => t.id === tagId) ?? null;
+                if (tag) {
+                    setCommunityTag(tag);
+                    setCommunityDropdown(resp.dropdown);
+                    setKernelEntries(resp.accounts.map(a => ({
+                        account: tagKernelAccountToSearchResult(a),
+                        manuallyAdded: false,
+                        tagSources: a.applied_tags,
+                    })));
+                }
+            } finally {
+                if (!cancelled) {
+                    setTagTransitionLoading(false);
+                    initializedFromUrl.current = true;
+                }
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // Keep the URL search param and document title in sync with the selected tag.
+    // Guarded so it does not clobber the param before initialization has read it.
+    React.useEffect(() => {
+        document.title = communityTag ? `${communityTag.name} | ${BASE_TITLE}` : BASE_TITLE;
+        if (!initializedFromUrl.current) return;
+        setSearchParams(prev => {
+            const next = new URLSearchParams(prev);
+            if (communityTag?.id != null) {
+                next.set(COMMUNITY_TAG_PARAM, String(communityTag.id));
+            } else {
+                next.delete(COMMUNITY_TAG_PARAM);
+            }
+            return next;
+        }, {replace: true});
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [communityTag]);
 
     // ── Derived ───────────────────────────────────────────────────────────────
 
@@ -570,6 +688,10 @@ export default function CommunityDetectionPage() {
 
     const runAnalysis = async () => {
         setIsComputing(true);
+        // Invalidate cached tag distributions — scores (and thus the relevant
+        // candidates) may have changed for this new run.
+        setCandidateTagDistributions({});
+        setLoadingTagDistributions({});
         try {
             const resp: CommunityCandidatesResponse = await fetchCommunityCandidates(
                 kernelIds, excludedIds, weights
@@ -599,7 +721,7 @@ export default function CommunityDetectionPage() {
                 title: candidateTitle(candidate),
                 details: candidate.bio ?? undefined,
                 thumbnails: candidate.thumbnails,
-                metadata: {media_count: candidate.media_count},
+                metadata: {media_count: candidate.media_count, url_suffix: candidate.url_suffix, display_name: candidate.display_name},
             },
             manuallyAdded: true,
             tagSources,
@@ -639,7 +761,7 @@ export default function CommunityDetectionPage() {
                                 title: candidateTitle(candidate),
                                 details: candidate.bio ?? undefined,
                                 thumbnails: candidate.thumbnails,
-                                metadata: {media_count: candidate.media_count},
+                                metadata: {media_count: candidate.media_count, url_suffix: candidate.url_suffix, display_name: candidate.display_name},
                             },
                             manuallyAdded: false,
                             tagSources,
@@ -711,9 +833,21 @@ export default function CommunityDetectionPage() {
             weights,
             excluded: excludedAccounts.map(stripThumbnails),
         };
+        const datePart = new Date().toISOString().slice(0, 10);
+        // Sanitize the tag name into a filesystem-safe slug (drop punctuation
+        // like . and , that would produce an illegal/misleading filename).
+        const tagSlug = communityTag
+            ? communityTag.name
+                .replace(/[^a-zA-Z0-9-_ ]/g, '')
+                .trim()
+                .replace(/\s+/g, '-')
+            : '';
+        const fileName = tagSlug
+            ? `community-${tagSlug}-${datePart}.json`
+            : `community-${datePart}.json`;
         downloadTextFile(
             JSON.stringify(state, null, 2),
-            `community-${new Date().toISOString().slice(0, 10)}.json`,
+            fileName,
             'application/json',
         );
     };
@@ -1199,6 +1333,9 @@ export default function CommunityDetectionPage() {
                                                 onAddToKernel={() => addCandidateToKernel(candidate)}
                                                 onExclude={() => excludeCandidate(candidate)}
                                                 onTagToggle={(tag) => handleCandidateTagToggle(candidate, tag)}
+                                                tagDistribution={candidateTagDistributions[candidate.id]}
+                                                tagDistributionLoading={!!loadingTagDistributions[candidate.id]}
+                                                onTagDistributionOpen={() => loadCandidateTagDistribution(candidate.id)}
                                             />
                                         ))}
                                     </Stack>

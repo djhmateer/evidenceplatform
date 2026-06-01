@@ -7,7 +7,7 @@ import {
     IAccountRelationsResponse,
     IPostAndAssociatedEntities
 } from "../../types/entities";
-import {ITagWithType} from "../../types/tags";
+import {ITagStat, ITagWithType} from "../../types/tags";
 import {
     Box,
     CircularProgress,
@@ -30,7 +30,8 @@ import {
     fetchAccountAuxiliaryCounts,
     fetchAccountData,
     fetchAccountInteractions,
-    fetchAccountRelations
+    fetchAccountRelations,
+    fetchRelatedTagStats
 } from "../../services/DataFetcher";
 import {EntityViewerConfig} from "./EntitiesViewerConfig";
 import EntityAnnotator from "./Annotator";
@@ -38,9 +39,10 @@ import AccountRelation from "./AccountRelation";
 import AccountComment from "./AccountComment";
 import AccountLike from "./AccountLike";
 import AccountTaggedInPost from "./AccountTaggedInPost";
+import RelatedTagDistributionTable from "../Tags/RelatedTagDistributionTable";
 
 import {getShareTokenFromHref, SHARE_URL_PARAM} from "../../services/linkSharing";
-import {AddReaction, DataObject, People} from "@mui/icons-material";
+import {AddReaction, DataObject, LocalOffer, People} from "@mui/icons-material";
 
 function parseCssDimension(value: string | number | undefined, viewportPx: number): number {
     if (value == null) return 0;
@@ -213,16 +215,19 @@ export default function Account({
     const [interactions, setInteractions] = useState<IAccountInteractions | null>(null);
     const [loadingInteractions, setLoadingInteractions] = useState(false);
 
+    const [relatedTags, setRelatedTags] = useState<ITagStat[] | null>(null);
+    const [loadingRelatedTags, setLoadingRelatedTags] = useState(false);
+
     const mergeAccountTags = (newTags: Record<number, ITagWithType[]> | undefined) => {
         if (newTags && Object.keys(newTags).length > 0) {
             setAccountTagsMap(prev => ({...prev, ...newTags}));
         }
     };
 
-    const [activeTab, setActiveTab] = useState<'relations' | 'interactions' | 'raw' | null>(
+    const [activeTab, setActiveTab] = useState<'relations' | 'interactions' | 'tagDistribution' | 'raw' | null>(
         highlightRelationId ? 'relations' : null
     );
-    const handleTabToggle = (tab: 'relations' | 'interactions' | 'raw') => () => {
+    const handleTabToggle = (tab: 'relations' | 'interactions' | 'tagDistribution' | 'raw') => () => {
         if (activeTab === tab) setActiveTab(null);
     };
 
@@ -258,9 +263,18 @@ export default function Account({
         setLoadingInteractions(false);
     }, [loadingInteractions, interactions, account.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    const loadRelatedTags = useCallback(async () => {
+        if (loadingRelatedTags || relatedTags !== null || account.id == null) return;
+        setLoadingRelatedTags(true);
+        const fetched = await fetchRelatedTagStats(account.id);
+        setRelatedTags(fetched);
+        setLoadingRelatedTags(false);
+    }, [loadingRelatedTags, relatedTags, account.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
     useEffect(() => {
         if (activeTab === 'relations') loadRelations();
         if (activeTab === 'interactions') loadInteractions();
+        if (activeTab === 'tagDistribution') loadRelatedTags();
         if (activeTab === 'raw') fetchAccountDetails();
     }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -445,6 +459,14 @@ export default function Account({
                             onClick={handleTabToggle('interactions')}
                         />
                     )}
+                    {account.id != null && (
+                        <Tab
+                            value="tagDistribution"
+                            label="Tag Distribution"
+                            icon={<LocalOffer/>} iconPosition="start"
+                            onClick={handleTabToggle('tagDistribution')}
+                        />
+                    )}
                     <Tab
                         value="raw"
                         label="Raw Data"
@@ -470,6 +492,11 @@ export default function Account({
                                 loadingInteractions={loadingInteractions}
                                 interactions={interactions}
                             />
+                        )}
+                        {activeTab === 'tagDistribution' && (
+                            loadingRelatedTags
+                                ? <CircularProgress size={16}/>
+                                : <RelatedTagDistributionTable stats={relatedTags ?? []}/>
                         )}
                         {activeTab === 'raw' && (
                             <>

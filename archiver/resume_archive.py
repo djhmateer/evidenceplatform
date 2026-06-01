@@ -244,7 +244,10 @@ def resume_archive(archive_dir: Path) -> None:
 
     print("Protecting HAR (chunked hash + PAR2 + OTS)...")
     try:
-        har_protection = protect_file(har_path)
+        # timestamp=True: standalone per-asset OTS proof for the HAR, matching
+        # the main archive.py path. The archive-level seal still runs later via
+        # finalize_archive().
+        har_protection = protect_file(har_path, timestamp=True)
         metadata.har_integrity = har_protection.to_integrity(base_dir=archive_dir)
     except Exception as e:
         traceback.print_exc()

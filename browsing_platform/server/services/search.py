@@ -26,6 +26,7 @@ class ISearchQuery(BaseModel):
     page_size: int
     tag_ids: Optional[list[int]] = None
     tag_filter_mode: Optional[Literal["any", "all"]] = None
+    tag_scopes: Optional[list[str]] = None
     sort_by: Optional[str] = None
     sort_order: Optional[Literal["asc", "desc"]] = None
 
@@ -194,53 +195,80 @@ def extract_account_handle(s: str) -> Optional[str]:
     return None
 
 
-_ENTITY_TAG_MAP = {
-    "account": ("account_tag", "account_id"),
-    "post": ("post_tag", "post_id"),
-    "media": ("media_tag", "media_id"),
+# Per (searched entity, tag scope): a SELECT producing (matched_id, root_id) that drives from the
+# `tag_desc` descendant CTE into the indexed association table(s), then maps back to the searched
+# entity's id. Driving from `tag_desc` (a small set) into `idx_*_tag_id` and the FK indexes keeps
+# every branch index-friendly. `media_part` is only ever a tag *source* (never searched), so its
+# tags roll up to the parent media's id (and onward to the post/account).
+_SCOPE_BRANCHES: dict[tuple[str, str], str] = {
+    ("media", "media"):        "SELECT mt.media_id AS matched_id, td.root_id FROM tag_desc td JOIN media_tag mt ON mt.tag_id = td.id",
+    ("media", "post"):         "SELECT m.id AS matched_id, td.root_id FROM tag_desc td JOIN post_tag pt ON pt.tag_id = td.id JOIN media m ON m.post_id = pt.post_id",
+    ("media", "account"):      "SELECT m.id AS matched_id, td.root_id FROM tag_desc td JOIN account_tag at ON at.tag_id = td.id JOIN media m ON m.account_id = at.account_id",
+    ("media", "media_part"):   "SELECT mp.media_id AS matched_id, td.root_id FROM tag_desc td JOIN media_part_tag mpt ON mpt.tag_id = td.id JOIN media_part mp ON mp.id = mpt.media_part_id",
+    ("post", "post"):          "SELECT pt.post_id AS matched_id, td.root_id FROM tag_desc td JOIN post_tag pt ON pt.tag_id = td.id",
+    ("post", "media"):         "SELECT m.post_id AS matched_id, td.root_id FROM tag_desc td JOIN media_tag mt ON mt.tag_id = td.id JOIN media m ON m.id = mt.media_id WHERE m.post_id IS NOT NULL",
+    ("post", "account"):       "SELECT p.id AS matched_id, td.root_id FROM tag_desc td JOIN account_tag at ON at.tag_id = td.id JOIN post p ON p.account_id = at.account_id",
+    ("post", "media_part"):    "SELECT m.post_id AS matched_id, td.root_id FROM tag_desc td JOIN media_part_tag mpt ON mpt.tag_id = td.id JOIN media_part mp ON mp.id = mpt.media_part_id JOIN media m ON m.id = mp.media_id WHERE m.post_id IS NOT NULL",
+    ("account", "account"):    "SELECT at.account_id AS matched_id, td.root_id FROM tag_desc td JOIN account_tag at ON at.tag_id = td.id",
+    ("account", "post"):       "SELECT p.account_id AS matched_id, td.root_id FROM tag_desc td JOIN post_tag pt ON pt.tag_id = td.id JOIN post p ON p.id = pt.post_id WHERE p.account_id IS NOT NULL",
+    ("account", "media"):      "SELECT m.account_id AS matched_id, td.root_id FROM tag_desc td JOIN media_tag mt ON mt.tag_id = td.id JOIN media m ON m.id = mt.media_id WHERE m.account_id IS NOT NULL",
+    ("account", "media_part"): "SELECT m.account_id AS matched_id, td.root_id FROM tag_desc td JOIN media_part_tag mpt ON mpt.tag_id = td.id JOIN media_part mp ON mp.id = mpt.media_part_id JOIN media m ON m.id = mp.media_id WHERE m.account_id IS NOT NULL",
 }
 
+# Allowed tag scopes per searched entity, derived from _SCOPE_BRANCHES so the whitelist can never
+# reference a scope that has no branch (which would KeyError below). Insertion order is preserved,
+# so the first scope per entity is its own (the default). This is the single backend source of
+# truth; it mirrors SCOPE_OPTIONS in the client's lib/tagScopes.ts across the language boundary.
+_ALLOWED_SCOPES: dict[str, list[str]] = {}
+for _branch_entity, _branch_scope in _SCOPE_BRANCHES:
+    _ALLOWED_SCOPES.setdefault(_branch_entity, []).append(_branch_scope)
 
-def build_tag_filter_join(entity: str, tag_ids: list[int], tag_filter_mode: str) -> tuple[str, dict]:
-    """Build a JOIN subquery that filters entities by tag (with recursive descendant expansion)."""
-    entity_tag_table, entity_id_col = _ENTITY_TAG_MAP[entity]
+
+def build_tag_filter_join(entity: str, tag_ids: list[int], tag_filter_mode: str,
+                          tag_scopes: Optional[list[str]] = None) -> tuple[str, dict]:
+    """Build a JOIN subquery that filters `entity` rows by tag, expanding each tag to its
+    descendants in the hierarchy and consulting tags across one or more related-entity *scopes*.
+
+    A row qualifies for a given tag if any of its associated entities in a selected scope (or the
+    entity itself) carries the tag or a descendant of it, so selecting more scopes yields more
+    matches. `tag_filter_mode`:
+      - "any": match rows reachable from at least one input tag (via any selected scope)
+      - "all": match rows where every input tag is satisfied by some selected-scope association
+               (tag-level AND, scope-level OR)
+    Scopes are intersected against the whitelist for `entity` (preserving its order); an empty or
+    invalid selection falls back to `[entity]`, which reproduces the legacy direct-tagging filter.
+    """
+    allowed = _ALLOWED_SCOPES[entity]
+    requested = set(tag_scopes or [entity])
+    scopes = [s for s in allowed if s in requested] or [entity]
+
     args: dict = {}
+    # Recursive descendant CTE, carrying root_id so "all" mode can require coverage of every tag.
+    seeds = "\n        UNION ALL ".join(
+        f"SELECT %(tid_{i})s AS id, %(tid_{i})s AS root_id" for i in range(len(tag_ids))
+    )
+    for i, tid in enumerate(tag_ids):
+        args[f"tid_{i}"] = tid
+
+    branches = "\n        UNION ALL\n        ".join(_SCOPE_BRANCHES[(entity, s)] for s in scopes)
+
     if tag_filter_mode == "all":
-        # Entity must have at least one tag from each input tag's descendant set.
-        # Carry root_id through the CTE so we can COUNT(DISTINCT root_id) per entity.
-        union_seeds = "\n        UNION ALL ".join(
-            f"SELECT %(tid_{i})s AS id, %(tid_{i})s AS root_id" for i in range(len(tag_ids))
-        )
-        for i, tid in enumerate(tag_ids):
-            args[f"tid_{i}"] = tid
         args["tag_count"] = len(tag_ids)
-        sql = f"""JOIN (
+        having = "\n    HAVING COUNT(DISTINCT root_id) = %(tag_count)s"
+    else:
+        having = ""
+
+    sql = f"""JOIN (
     WITH RECURSIVE tag_desc AS (
-        {union_seeds}
+        {seeds}
         UNION ALL
         SELECT th.sub_tag_id, td.root_id
         FROM tag_hierarchy th JOIN tag_desc td ON th.super_tag_id = td.id
     )
-    SELECT et.{entity_id_col} AS matched_id
-    FROM {entity_tag_table} et
-    JOIN tag_desc td ON et.tag_id = td.id
-    GROUP BY et.{entity_id_col}
-    HAVING COUNT(DISTINCT td.root_id) = %(tag_count)s
-) _tag_filter ON {entity}.id = _tag_filter.matched_id"""
-    else:
-        # "any" mode — entity has at least one tag from any descendant set
-        seed_in = ", ".join(f"%(tid_{i})s" for i in range(len(tag_ids)))
-        for i, tid in enumerate(tag_ids):
-            args[f"tid_{i}"] = tid
-        sql = f"""JOIN (
-    WITH RECURSIVE tag_desc AS (
-        SELECT id FROM tag WHERE id IN ({seed_in})
-        UNION ALL
-        SELECT th.sub_tag_id FROM tag_hierarchy th JOIN tag_desc td ON th.super_tag_id = td.id
-    )
-    SELECT DISTINCT et.{entity_id_col} AS matched_id
-    FROM {entity_tag_table} et
-    WHERE et.tag_id IN (SELECT id FROM tag_desc)
+    SELECT matched_id FROM (
+        {branches}
+    ) reach
+    GROUP BY matched_id{having}
 ) _tag_filter ON {entity}.id = _tag_filter.matched_id"""
     return sql, args
 
@@ -293,7 +321,7 @@ def search_accounts(query: ISearchQuery, search_results_transform: SearchResultT
         query_args.update(general_args)
     tag_filter_join = ""
     if query.tag_ids:
-        tag_filter_join, tag_filter_args = build_tag_filter_join("account", query.tag_ids, query.tag_filter_mode or "any")
+        tag_filter_join, tag_filter_args = build_tag_filter_join("account", query.tag_ids, query.tag_filter_mode or "any", query.tag_scopes)
         query_args.update(tag_filter_args)
     order_by = (
         "MATCH(`url_suffix`, `url_parts`, `bio`, `display_name`) AGAINST (%(search_term)s IN BOOLEAN MODE) DESC"
@@ -372,7 +400,7 @@ def search_posts(query: ISearchQuery, search_results_transform: SearchResultTran
         query_args.update(general_args)
     tag_filter_join = ""
     if query.tag_ids:
-        tag_filter_join, tag_filter_args = build_tag_filter_join("post", query.tag_ids, query.tag_filter_mode or "any")
+        tag_filter_join, tag_filter_args = build_tag_filter_join("post", query.tag_ids, query.tag_filter_mode or "any", query.tag_scopes)
         query_args.update(tag_filter_args)
     inner_where = ('WHERE ' + ' AND '.join(where_clauses)) if where_clauses else ''
     order_by = (
@@ -453,7 +481,7 @@ def search_media(query: ISearchQuery, search_results_transform: SearchResultTran
         query_args.update(general_args)
     tag_filter_join = ""
     if query.tag_ids:
-        tag_filter_join, tag_filter_args = build_tag_filter_join("media", query.tag_ids, query.tag_filter_mode or "any")
+        tag_filter_join, tag_filter_args = build_tag_filter_join("media", query.tag_ids, query.tag_filter_mode or "any", query.tag_scopes)
         query_args.update(tag_filter_args)
     inner_where = ' AND '.join(where_clauses)
     order_by = resolve_order_by("media", query.sort_by, query.sort_order, "media.id DESC")

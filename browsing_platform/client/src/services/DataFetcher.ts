@@ -338,6 +338,7 @@ export interface ISearchQuery {
     page_size: number;
     tag_ids?: number[];
     tag_filter_mode?: "any" | "all";
+    tag_scopes?: E_ENTITY_TYPES[];
     sort_by?: string | null;
     sort_order?: 'asc' | 'desc' | null;
 }

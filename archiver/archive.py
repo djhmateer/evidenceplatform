@@ -1,29 +1,28 @@
 # archive.py
+import base64
 import datetime
+import hashlib
 import json
-import ijson
 import os
 import shutil
+import socket
+import ssl
+import subprocess
 import sys
 import threading
 import time
 import traceback
-import hashlib
-import socket
-import ssl
-from urllib.parse import urlparse
 from pathlib import Path
 from typing import Optional
-
-import base64
+from urllib.parse import urlparse
 
 import cv2
+import ijson
 import numpy as np
 import pyautogui
 import pygetwindow as gw
-import subprocess
 from dotenv import load_dotenv
-from playwright.sync_api import sync_playwright, Browser, BrowserContext
+from playwright.sync_api import sync_playwright
 from pydantic import BaseModel
 
 from archiver.dialogs import show_dialog_form, DialogForm, FormFieldText, FormFieldBool, FormSection
@@ -38,7 +37,6 @@ from utils.commit_tracker.git_helper import ensure_committed
 from utils.ffmpeg_installer import ensure_ffmpeg_installed
 from utils.integrity import FileIntegrity, protect_file, seal_archive
 from utils.misc import get_my_public_ip, get_system_info
-from utils.opentimestamps.timestamper_opentimestamps import timestamp_file
 from utils.par2_installer import ensure_par2_installed
 
 SCREEN_SIZE = tuple(pyautogui.size())
@@ -598,10 +596,13 @@ def finish_recording(recording_thread: Optional[threading.Thread], archive_dir: 
                 print(f"FFmpeg re-encode failed, keeping raw recording: {e}")
                 shutil.move(str(raw_video_path), str(video_path))
 
-        # Build chunked-hash manifest + PAR2 recovery + OTS for the screen recording
+        # Build chunked-hash manifest + PAR2 recovery + OTS for the screen recording.
+        # timestamp=True writes a standalone <file>.manifest.json.ots proof for the
+        # recording on top of the archive-level seal, so this key asset can be
+        # independently timestamp-verified without the rest of the archive.
         if video_path.exists():
             try:
-                video_protection = protect_file(video_path)
+                video_protection = protect_file(video_path, timestamp=True)
                 metadata.video_integrity = video_protection.to_integrity(base_dir=archive_dir)
             except Exception as e:
                 traceback.print_exc()
@@ -630,8 +631,11 @@ def finish_recording(recording_thread: Optional[threading.Thread], archive_dir: 
 
         metadata.archiving_finished_timestamp = datetime.datetime.now().isoformat()
 
+        # timestamp=True writes a standalone <file>.manifest.json.ots proof for the
+        # HAR on top of the archive-level seal — the HAR is the load-bearing
+        # evidence file, so an independent per-asset timestamp is worth the extra cost.
         try:
-            har_protection = protect_file(har_path)
+            har_protection = protect_file(har_path, timestamp=True)
             metadata.har_integrity = har_protection.to_integrity(base_dir=archive_dir)
         except Exception as e:
             traceback.print_exc()

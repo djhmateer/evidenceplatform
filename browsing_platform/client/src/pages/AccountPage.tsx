@@ -1,23 +1,14 @@
 import React, {useEffect, useState} from 'react';
 import {useParams, useSearchParams} from "react-router";
 import {
-    Button,
-    CircularProgress,
-    Collapse,
     IconButton,
     Stack,
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableRow,
     Tooltip,
     Typography,
 } from "@mui/material";
 import GridOnIcon from '@mui/icons-material/GridOn';
 import TableRowsIcon from "@mui/icons-material/TableRows";
-import {fetchAccount, fetchArchivingSessionsAccount, fetchRelatedTagStats} from "../services/DataFetcher";
-import {ITagStat} from "../types/tags";
+import {fetchAccount, fetchArchivingSessionsAccount} from "../services/DataFetcher";
 import EntitiesViewer from "../UIComponents/Entities/EntitiesViewer";
 import ArchivingSessionsList from "../UIComponents/Entities/ArchivingSessionsList";
 import {EntityViewerConfig} from "../UIComponents/Entities/EntitiesViewerConfig";
@@ -56,10 +47,6 @@ export default function AccountPage() {
         });
     };
 
-    const [tagStats, setTagStats] = useState<ITagStat[] | null>(null);
-    const [tagStatsExpanded, setTagStatsExpanded] = useState(false);
-    const [loadingTagStats, setLoadingTagStats] = useState(false);
-
     const {data, loadingData, fetchError, sessions, loadingSessions, dbId} = useEntityPageState(
         apiRef,
         (ref) => fetchAccount(ref, {
@@ -87,21 +74,6 @@ export default function AccountPage() {
             document.title = name ? `${name} | Account | Browsing Platform` : 'Account | Browsing Platform';
         }
     }, [loadingData, data]);
-
-    const loadTagStats = () => {
-        if (!dbId || loadingTagStats || tagStats !== null) return;
-        setLoadingTagStats(true);
-        fetchRelatedTagStats(dbId).then(stats => {
-            setTagStats(stats);
-            setLoadingTagStats(false);
-        });
-    };
-
-    const handleTagStatsToggle = () => {
-        const next = !tagStatsExpanded;
-        setTagStatsExpanded(next);
-        if (next) loadTagStats();
-    };
 
     const renderData = () => (
         <DataLoadGuard loadingData={loadingData} fetchError={fetchError} data={data}>
@@ -153,37 +125,6 @@ export default function AccountPage() {
         >
             {renderData()}
             {!fetchError && <ArchivingSessionsList sessions={sessions} loadingSessions={loadingSessions}/>}
-            {!fetchError && !disableAnnotator && dbId && (
-                <Stack gap={1}>
-                    <Button variant="text" size="small" onClick={handleTagStatsToggle} sx={{alignSelf: 'flex-start'}}>
-                        {tagStatsExpanded ? "▾" : "▸"} Related Accounts — Tag Distribution
-                    </Button>
-                    <Collapse in={tagStatsExpanded} unmountOnExit>
-                        {loadingTagStats ? <CircularProgress size={20}/> : (
-                            tagStats && tagStats.length > 0 ? (
-                                <Table size="small" sx={{maxWidth: 480}}>
-                                    <TableHead>
-                                        <TableRow>
-                                            <TableCell>Tag</TableCell>
-                                            <TableCell>Type</TableCell>
-                                            <TableCell align="right">Count</TableCell>
-                                        </TableRow>
-                                    </TableHead>
-                                    <TableBody>
-                                        {tagStats.map(s => (
-                                            <TableRow key={s.tag_id}>
-                                                <TableCell>{s.tag_name}</TableCell>
-                                                <TableCell>{s.tag_type_name}</TableCell>
-                                                <TableCell align="right">×{s.count}</TableCell>
-                                            </TableRow>
-                                        ))}
-                                    </TableBody>
-                                </Table>
-                            ) : <Typography variant="body2" color="text.secondary">No tag data for related accounts.</Typography>
-                        )}
-                    </Collapse>
-                </Stack>
-            )}
         </PageShell>
     );
 }

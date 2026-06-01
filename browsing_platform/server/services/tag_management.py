@@ -491,19 +491,52 @@ def get_related_account_tag_stats(account_id: int) -> list[ITagStat]:
         """SELECT t.id AS tag_id, t.name AS tag_name, tt.name AS tag_type_name,
                   COUNT(DISTINCT related.account_id) AS count
            FROM (
+               -- follow: the account is followed / follows
                SELECT DISTINCT follower_account_id AS account_id
                FROM account_relation WHERE followed_account_id = %(id)s
                UNION
                SELECT DISTINCT followed_account_id
                FROM account_relation WHERE follower_account_id = %(id)s
                UNION
+               -- comment: someone commented on the account's post
                SELECT DISTINCT c.account_id
                FROM comment c JOIN post p ON c.post_id = p.id
                WHERE p.account_id = %(id)s AND c.account_id != %(id)s
                UNION
+               -- comment: the account commented on someone's post
+               SELECT DISTINCT p.account_id
+               FROM comment c JOIN post p ON c.post_id = p.id
+               WHERE c.account_id = %(id)s AND p.account_id != %(id)s
+               UNION
+               -- like: someone liked the account's post
                SELECT DISTINCT pl.account_id
                FROM post_like pl JOIN post p ON pl.post_id = p.id
                WHERE p.account_id = %(id)s AND pl.account_id != %(id)s
+               UNION
+               -- like: the account liked someone's post
+               SELECT DISTINCT p.account_id
+               FROM post_like pl JOIN post p ON pl.post_id = p.id
+               WHERE pl.account_id = %(id)s AND p.account_id != %(id)s
+               UNION
+               -- tag: the account tagged someone in a post
+               SELECT DISTINCT ta.tagged_account_id
+               FROM tagged_account ta JOIN post p ON ta.post_id = p.id
+               WHERE p.account_id = %(id)s AND ta.tagged_account_id != %(id)s
+               UNION
+               -- tag: the account tagged someone in media
+               SELECT DISTINCT ta.tagged_account_id
+               FROM tagged_account ta JOIN media m ON ta.media_id = m.id
+               WHERE m.account_id = %(id)s AND ta.tagged_account_id != %(id)s
+               UNION
+               -- tag: the account was tagged in someone's post
+               SELECT DISTINCT p.account_id
+               FROM tagged_account ta JOIN post p ON ta.post_id = p.id
+               WHERE ta.tagged_account_id = %(id)s AND p.account_id != %(id)s
+               UNION
+               -- tag: the account was tagged in someone's media
+               SELECT DISTINCT m.account_id
+               FROM tagged_account ta JOIN media m ON ta.media_id = m.id
+               WHERE ta.tagged_account_id = %(id)s AND m.account_id != %(id)s
            ) related
            JOIN account_tag at ON at.account_id = related.account_id
            JOIN tag t ON t.id = at.tag_id

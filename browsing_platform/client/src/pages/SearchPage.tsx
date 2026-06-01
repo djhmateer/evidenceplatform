@@ -1,7 +1,11 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {useLocation, useNavigate, useSearchParams} from 'react-router';
-import {Box, Button, Stack} from '@mui/material';
+import {Box, Button, IconButton, Stack, Tooltip, useMediaQuery} from '@mui/material';
+import GridViewIcon from '@mui/icons-material/GridView';
+import ViewComfyIcon from '@mui/icons-material/ViewComfy';
 import {ITagWithType} from '../types/tags';
+import {E_ENTITY_TYPES} from '../types/entities';
+import {VALID_TAG_SCOPES, defaultScopesFor, isDefaultScopes} from '../lib/tagScopes';
 import {
     ADVANCED_FILTERS_CONFIG,
     batchAnnotate,
@@ -52,6 +56,12 @@ const extractQueryFromParams = (searchParams: URLSearchParams): ISearchQuery => 
         page_size: Math.max(20, parseInt(searchParams.get('ps') || String(modeDefault), 10) || modeDefault),
         tag_ids: (searchParams.get('t') || '').split(',').map(Number).filter(n => !isNaN(n) && n > 0),
         tag_filter_mode: searchParams.get('tm') === 'all' ? 'all' : 'any',
+        tag_scopes: ((): ISearchQuery['tag_scopes'] => {
+            const raw = (searchParams.get('ts') || '')
+                .split(',')
+                .filter((s): s is E_ENTITY_TYPES => VALID_TAG_SCOPES.includes(s as E_ENTITY_TYPES));
+            return raw.length ? raw : defaultScopesFor(SEARCH_MODE_TO_ENTITY[search_mode]);
+        })(),
         sort_by: searchParams.get('sb') || null,
         sort_order: searchParams.get('so') === 'asc' ? 'asc' : searchParams.get('so') === 'desc' ? 'desc' : null,
     };
@@ -61,8 +71,21 @@ export default function SearchPage() {
     const navigate = useNavigate();
     const location = useLocation();
     const [searchParams] = useSearchParams();
+    const isMobile = useMediaQuery('(max-width: 768px)');
 
     const query = extractQueryFromParams(searchParams);
+
+    const [largeIcons, setLargeIcons] = useState<boolean>(
+        () => localStorage.getItem('media_search_large_icons') === 'true'
+    );
+
+    const toggleLargeIcons = () => {
+        setLargeIcons(prev => {
+            const next = !prev;
+            localStorage.setItem('media_search_large_icons', String(next));
+            return next;
+        });
+    };
 
     const [results, setResults] = useState<SearchResult[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -108,6 +131,12 @@ export default function SearchPage() {
         if (q.search_mode && q.search_mode !== 'accounts') params.append('sm', q.search_mode);
         if (q.tag_ids && q.tag_ids.length > 0) params.append('t', q.tag_ids.join(','));
         if (q.tag_ids && q.tag_ids.length > 1 && q.tag_filter_mode && q.tag_filter_mode !== 'any') params.append('tm', q.tag_filter_mode);
+        // Only persist tag scopes when broadened beyond the default (the searched entity itself),
+        // matching how `tm` is only written when non-default — keeps shareable URLs clean.
+        if (q.tag_ids && q.tag_ids.length > 0 && q.tag_scopes && q.tag_scopes.length
+            && !isDefaultScopes(q.tag_scopes, SEARCH_MODE_TO_ENTITY[q.search_mode])) {
+            params.append('ts', q.tag_scopes.join(','));
+        }
         if (q.sort_by) {
             params.append('sb', q.sort_by);
             if (q.sort_order) params.append('so', q.sort_order);
@@ -146,11 +175,19 @@ export default function SearchPage() {
 
     return (
         <div className="page-wrap">
-            <TopNavBar>Search Archives</TopNavBar>
+            <TopNavBar>
+                Search Archives
+                {!isMobile && query.search_mode === 'media' && (
+                    <Tooltip title={largeIcons ? 'Small icons' : 'Large icons'} arrow>
+                        <IconButton color="inherit" onClick={toggleLargeIcons} sx={{ml: 'auto'}}>
+                            {largeIcons ? <ViewComfyIcon/> : <GridViewIcon/>}
+                        </IconButton>
+                    </Tooltip>
+                )}
+            </TopNavBar>
             <div className="page-content content-wrap">
                 <Stack gap={2} sx={{width: '100%'}}>
                     <SearchPanel
-                        key={searchParams.toString()}
                         query={query}
                         onSearch={encodeQueryToParams}
                         results={results}
@@ -161,6 +198,7 @@ export default function SearchPage() {
                         showTaggingMode
                         searchHistory={{getSuggestions, addSearch, removeSearch}}
                         tagging={tagging}
+                        largeIcons={largeIcons}
                     />
                     {/* Pagination (stays in SearchPage, outside SearchPanel) */}
                     <Stack direction="row" spacing={2} justifyContent="center" alignItems="center">

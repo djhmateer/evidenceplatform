@@ -62,10 +62,13 @@ interface CellProps {
     tags: ITagWithType[];
     selected: boolean;
     onToggleSelected?: (id: number) => void;
+    largeIcons?: boolean;
 }
 
-function MediaSearchResultCell({result, tags, selected, onToggleSelected}: CellProps) {
+function MediaSearchResultCell({result, tags, selected, onToggleSelected, largeIcons}: CellProps) {
     const isMobile = useMediaQuery('(max-width: 768px)');
+    // Mobile, and desktop large-icon mode, load full-res assets automatically on scroll.
+    const autoLoadFullRes = isMobile || !!largeIcons;
     const [hovered, setHovered] = useState(false);
     const [everHovered, setEverHovered] = useState(false);
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -94,16 +97,16 @@ function MediaSearchResultCell({result, tags, selected, onToggleSelected}: CellP
     }, [hovered]);
 
     useEffect(() => {
-        if (!isMobile) return;
+        if (!autoLoadFullRes) return;
         const el = containerRef.current;
         if (!el) return;
         const observer = new IntersectionObserver(
-            ([entry]) => { if (entry.isIntersecting) setEverHovered(true); },
+            ([entry]) => { if (entry.isIntersecting) { setEverHovered(true); observer.disconnect(); } },
             {threshold: 0.1},
         );
         observer.observe(el);
         return () => observer.disconnect();
-    }, [isMobile]);
+    }, [autoLoadFullRes]);
 
     return (
         <Box
@@ -184,7 +187,7 @@ function MediaSearchResultCell({result, tags, selected, onToggleSelected}: CellP
     );
 }
 
-export default function MediaSearchResults({results, tagsMap, selectedIds, onToggleSelected}: SearchResultsProps) {
+export default function MediaSearchResults({results, tagsMap, selectedIds, onToggleSelected, largeIcons}: SearchResultsProps) {
     if (results.length === 0) {
         return <Box>No results found.</Box>;
     }
@@ -192,7 +195,7 @@ export default function MediaSearchResults({results, tagsMap, selectedIds, onTog
         <Box
             sx={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+                gridTemplateColumns: `repeat(auto-fill, minmax(${largeIcons ? 350 : 150}px, 1fr))`,
                 gap: 1,
             }}
         >
@@ -203,6 +206,7 @@ export default function MediaSearchResults({results, tagsMap, selectedIds, onTog
                     tags={tagsMap?.[result.id] ?? []}
                     selected={selectedIds?.has(result.id) ?? false}
                     onToggleSelected={onToggleSelected}
+                    largeIcons={largeIcons}
                 />
             ))}
         </Box>
