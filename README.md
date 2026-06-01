@@ -103,7 +103,7 @@ The frontend will be accessible at `http://localhost:3000` and will communicate 
 
 #### Migrations
 
-
+uv run infra/migrate.py
 
 ---
 
@@ -113,9 +113,9 @@ The frontend will be accessible at `http://localhost:3000` and will communicate 
 
 #### 1. Backup Database
 ```bash
-# On production server
+# On production server (see secrets create_webserver_exoscale.sh)
 # 10mins
-mysqldump -u golf -pSEESECRETSBUILDWEBSERVER evidenceplatform > evidenceplatform_backup_$(date +%Y%m%d_%H%M%S).sql
+mysqldump --no-tablespaces -u golf -pSEESECRETSBUILDWEBSERVER evidenceplatform > evidenceplatform_backup_$(date +%Y%m%d_%H%M%S).sql
 ```
 
 #### 2. Backup Files and Archives
