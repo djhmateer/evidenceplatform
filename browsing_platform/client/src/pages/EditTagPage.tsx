@@ -20,12 +20,14 @@ import {
     Typography,
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
+import AddIcon from '@mui/icons-material/Add';
 import TopNavBar from '../UIComponents/TopNavBar/TopNavBar';
 import TagUsageTabs from '../UIComponents/TagUsageTabs/TagUsageTabs';
 import {ITagHierarchyEntry, ITagType, ITagUsage, ITagWithType} from '../types/tags';
 import {E_ENTITY_TYPES} from '../types/entities';
 import {
     addHierarchy,
+    createTag,
     fetchTag,
     fetchTagChildren,
     fetchTagParents,
@@ -39,6 +41,18 @@ import {lookupTags} from '../services/DataFetcher';
 import {toast} from 'material-react-toastify';
 
 /* ── Hierarchy section ────────────────────────────────────────────────────── */
+
+type CreateOption = {inputValue: string; __create: true};
+type AddAutocompleteOption = ITagWithType | CreateOption;
+
+const isCreateOption = (o: AddAutocompleteOption | string | null): o is CreateOption =>
+    !!o && typeof o === 'object' && (o as CreateOption).__create === true;
+
+// Whether typed text should offer a "create new tag" action: non-empty, comma-free, and not an existing option.
+const canOfferCreate = (raw: string, options: ITagWithType[]): boolean => {
+    const t = raw.trim().toLowerCase();
+    return t.length > 0 && !t.includes(',') && !options.some(o => o.name.toLowerCase() === t);
+};
 
 function HierarchyTagSection({
     label,
@@ -56,6 +70,7 @@ function HierarchyTagSection({
     setAddOptions,
     onAdd,
     addLabel,
+    onCreateAndAdd,
 }: {
     label: string;
     entries: ITagHierarchyEntry[];
@@ -70,9 +85,15 @@ function HierarchyTagSection({
     setAddTag: React.Dispatch<React.SetStateAction<ITagWithType | null>>;
     addOptions: ITagWithType[];
     setAddOptions: React.Dispatch<React.SetStateAction<ITagWithType[]>>;
-    onAdd: () => Promise<void>;
+    onAdd: (tag: ITagWithType) => Promise<void>;
     addLabel: string;
+    onCreateAndAdd?: (name: string) => Promise<void>;
 }) {
+    const [inputValue, setInputValue] = useState('');
+    const trimmed = inputValue.trim();
+    const hasComma = inputValue.includes(',');
+    const canCreate = !!onCreateAndAdd && canOfferCreate(inputValue, addOptions);
+
     const activeEditingNote = editingNote && entries.some(e => e.super_tag_id === editingNote.super_id && e.sub_tag_id === editingNote.sub_id)
         ? editingNote : null;
 
@@ -86,6 +107,31 @@ function HierarchyTagSection({
         ));
         setEditingNote(null);
     };
+
+    // Commit a selected/typed value: create a new tag, link an existing tag, or commit free text.
+    const commit = async (value: AddAutocompleteOption | string | null) => {
+        if (isCreateOption(value)) {
+            await onCreateAndAdd!(value.inputValue.trim());
+            setInputValue('');
+            return;
+        }
+        if (typeof value === 'string') {
+            const name = value.trim();
+            if (onCreateAndAdd && name && !name.includes(',')) {
+                await onCreateAndAdd(name);
+                setInputValue('');
+            }
+            return;
+        }
+        if (value) {
+            await onAdd(value);
+            setAddTag(null);
+            setInputValue('');
+        }
+    };
+
+    // The "Add" button commits the current selection, or the typed name when creation is enabled.
+    const handleButton = () => commit(addTag ?? (canCreate ? {inputValue: trimmed, __create: true} : null));
 
     return (
         <Stack gap={0.5}>
@@ -122,19 +168,61 @@ function HierarchyTagSection({
                     />
                 </Stack>
             )}
-            <Stack direction="row" gap={1} alignItems="center">
-                <Autocomplete
+            <Stack direction="row" gap={1} alignItems="flex-start">
+                <Autocomplete<AddAutocompleteOption, false, false, boolean>
                     sx={{flex: 1}}
                     size="small"
+                    freeSolo={!!onCreateAndAdd}
+                    selectOnFocus
+                    handleHomeEndKeys
+                    blurOnSelect={false}
                     value={addTag}
-                    onChange={(_, v) => setAddTag(v)}
-                    onInputChange={async (_, v) => { if (v) setAddOptions(await lookupTags(v)); }}
+                    inputValue={inputValue}
+                    onInputChange={async (_, v, reason) => {
+                        if (reason !== 'reset') setInputValue(v);
+                        if (v) setAddOptions(await lookupTags(v));
+                    }}
+                    onChange={(_, v) => {
+                        // Child section (creation enabled) commits on select for rapid entry;
+                        // parent section keeps its select-then-click-Add flow.
+                        if (onCreateAndAdd) { void commit(v); }
+                        else { setAddTag(v as ITagWithType | null); }
+                    }}
                     options={addOptions}
-                    getOptionLabel={o => o.name}
-                    isOptionEqualToValue={(a, b) => a.id === b.id}
-                    renderInput={params => <TextField {...params} label={addLabel} size="small"/>}
+                    filterOptions={(opts, state) => {
+                        const tl = state.inputValue.trim().toLowerCase();
+                        const filtered = opts.filter(o => !isCreateOption(o) && o.name.toLowerCase().includes(tl));
+                        if (onCreateAndAdd && canOfferCreate(state.inputValue, opts.filter((o): o is ITagWithType => !isCreateOption(o)))) {
+                            filtered.unshift({inputValue: state.inputValue.trim(), __create: true});
+                        }
+                        return filtered;
+                    }}
+                    getOptionLabel={o => (typeof o === 'string' ? o : isCreateOption(o) ? o.inputValue : o.name)}
+                    isOptionEqualToValue={(a, b) =>
+                        isCreateOption(a) || isCreateOption(b)
+                            ? isCreateOption(a) && isCreateOption(b) && a.inputValue === b.inputValue
+                            : a.id === b.id}
+                    renderOption={(props, o) => (
+                        <li {...props} key={isCreateOption(o) ? `__create:${o.inputValue}` : o.id}>
+                            {isCreateOption(o) ? (
+                                <Stack direction="row" alignItems="center" gap={0.5} sx={{color: 'primary.main'}}>
+                                    <AddIcon fontSize="small"/>
+                                    <span>Create new subtag "{o.inputValue}"</span>
+                                </Stack>
+                            ) : o.name}
+                        </li>
+                    )}
+                    renderInput={params => (
+                        <TextField
+                            {...params}
+                            label={addLabel}
+                            size="small"
+                            error={hasComma}
+                            helperText={hasComma ? 'Tag name cannot contain commas' : undefined}
+                        />
+                    )}
                 />
-                <Button size="small" variant="outlined" onClick={onAdd} disabled={!addTag}>Add</Button>
+                <Button size="small" variant="outlined" onClick={handleButton} disabled={!addTag && !canCreate}>Add</Button>
             </Stack>
         </Stack>
     );
@@ -234,10 +322,9 @@ export default function EditTagPage() {
         }
     };
 
-    const handleAddParent = async () => {
-        if (!addParentTag) return;
+    const handleAddParent = async (tag: ITagWithType) => {
         try {
-            await addHierarchy({super_tag_id: addParentTag.id, sub_tag_id: tagId, notes: null});
+            await addHierarchy({super_tag_id: tag.id, sub_tag_id: tagId, notes: null});
             setAddParentTag(null);
             await loadHierarchy();
         } catch (e: any) {
@@ -245,14 +332,30 @@ export default function EditTagPage() {
         }
     };
 
-    const handleAddChild = async () => {
-        if (!addChildTag) return;
+    const handleAddChild = async (tag: ITagWithType) => {
         try {
-            await addHierarchy({super_tag_id: tagId, sub_tag_id: addChildTag.id, notes: null});
+            await addHierarchy({super_tag_id: tagId, sub_tag_id: tag.id, notes: null});
             setAddChildTag(null);
             await loadHierarchy();
         } catch (e: any) {
             toast.error(e?.message || 'Cannot add child (may create a cycle)');
+        }
+    };
+
+    const handleCreateChild = async (name: string) => {
+        try {
+            const created = await createTag({
+                name,
+                description: null,
+                tag_type_id: form.tag_type_id,
+                quick_access: form.quick_access,
+                omit_from_tag_type_dropdown: form.omit_from_tag_type_dropdown,
+                notes_recommended: form.notes_recommended,
+            });
+            await addHierarchy({super_tag_id: tagId, sub_tag_id: created.id!, notes: null});
+            await loadHierarchy();
+        } catch (e: any) {
+            toast.error(e?.message || 'Could not create subtag');
         }
     };
 
@@ -371,6 +474,7 @@ export default function EditTagPage() {
                             setAddOptions={setAddChildOptions}
                             onAdd={handleAddChild}
                             addLabel="Add child"
+                            onCreateAndAdd={handleCreateChild}
                         />
 
                         <Box sx={{display: 'flex', gap: 1, pt: 1}}>

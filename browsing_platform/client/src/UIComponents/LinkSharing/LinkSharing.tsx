@@ -42,8 +42,8 @@ export default function LinkSharing({entityType, entityId, stableSharePath}: IPr
     const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
     const [shareLinkInfo, setShareLinkInfo] = useState<ShareLinkInfo | null>(null);
     const [generationError, setGenerationError] = useState<string | null>(null);
-    const [pendingIncludeRecordings, setPendingIncludeRecordings] = useState(true);
-    const [pendingIncludeHar, setPendingIncludeHar] = useState(true);
+    const [pendingIncludeRecordings, setPendingIncludeRecordings] = useState(false);
+    const [pendingIncludeHar, setPendingIncludeHar] = useState(false);
     const [passwordEnabled, setPasswordEnabled] = useState(false);
     const [pendingPassword, setPendingPassword] = useState('');
     const [showPendingPassword, setShowPendingPassword] = useState(false);

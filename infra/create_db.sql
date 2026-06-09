@@ -593,6 +593,7 @@ create table tag
     quick_access                tinyint(1) default 0                 not null,
     omit_from_tag_type_dropdown tinyint(1) default 0                 not null,
     notes_recommended           tinyint(1) default 1                 not null,
+    community_dismissals        json                                 null comment 'Per-tag community-detection candidate dismissals: [{id, url_suffix, display_name}]',
     constraint name
         unique (name, tag_type_id),
     constraint tag_tag_type_id_fk

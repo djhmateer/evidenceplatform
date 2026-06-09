@@ -15,7 +15,7 @@ from extractors.extract_videos import (
 from extractors.models_har import HarRequest
 from extractors.structures_extraction import StructureType
 from extractors.structures_extraction_api_v1 import extract_data_from_api_v1_entry
-from extractors.structures_extraction_graphql import extract_graphql_from_response
+from extractors.structures_extraction_graphql import extract_graphql_from_response, is_graphql_url
 from extractors.structures_extraction_html import extract_data_from_html_entry
 
 
@@ -103,7 +103,7 @@ def scan_wacz(wacz_path: Path, output_dir: Path) -> tuple[list[StructureType], l
 
                     # --- Structures (GraphQL, API v1, HTML) ---
                     try:
-                        if 'graphql/query' in clean_url:
+                        if is_graphql_url(clean_url):
                             body = _decode_response_body(record)
                             if body:
                                 try:

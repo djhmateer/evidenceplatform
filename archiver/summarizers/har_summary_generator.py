@@ -585,7 +585,7 @@ def _make_json_collapsible(data: Any, soup: BeautifulSoup) -> Tag:
 
 
 def summarize_comments(comments: list[Comment], soup: BeautifulSoup) -> Tag:
-    sorted_comments = sorted(comments, key=lambda c: c.publication_date or 0)
+    sorted_comments = sorted(comments, key=lambda c: c.publication_date.timestamp() if c.publication_date else 0)
     top_level = [c for c in sorted_comments if not c.parent_comment_id_on_platform]
     replies: dict = {}
     for c in sorted_comments:
@@ -868,7 +868,7 @@ def summarize_account(account: AccountAndAssociatedEntities, soup: BeautifulSoup
         label['class'] = "account-posts-label"
         label.string = "Posts"
         posts_block.append(label)
-        account.account_posts.sort(key=lambda p: p.publication_date or 0, reverse=True)
+        account.account_posts.sort(key=lambda p: p.publication_date.timestamp() if p.publication_date else 0, reverse=True)
         for post in account.account_posts:
             posts_block.append(summarize_post(post, soup))
         card.append(posts_block)
@@ -1021,12 +1021,12 @@ def generate_entities_summary(
         archive_dir: Path,
         metadata: dict,
         video_acquisition_config: VideoAcquisitionConfig = VideoAcquisitionConfig(
-            download_missing=True, download_media_not_in_structures=True, download_unfetched_media=True,
-            download_full_versions_of_fetched_media=True, download_highest_quality_assets_from_structures=True
+            download_missing=False, download_media_not_in_structures=False, download_unfetched_media=False,
+            download_full_versions_of_fetched_media=False, download_highest_quality_assets_from_structures=False
         ),
         photo_acquisition_config: PhotoAcquisitionConfig = PhotoAcquisitionConfig(
-            download_missing=True, download_media_not_in_structures=True, download_unfetched_media=True,
-            download_highest_quality_assets_from_structures=True
+            download_missing=False, download_media_not_in_structures=False, download_unfetched_media=False,
+            download_highest_quality_assets_from_structures=False
         )
 ):
     flattened_entities = extract_entities_from_har(har_path, video_acquisition_config, photo_acquisition_config)

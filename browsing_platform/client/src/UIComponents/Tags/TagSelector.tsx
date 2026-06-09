@@ -53,9 +53,11 @@ export default function TagSelector({selectedTags, readOnly, onChange, onChipCli
                 filterOptions={filterOptions}
                 inputValue={inputValue}
                 onInputChange={async (_, newInputValue, reason) => {
-                    if (reason !== 'input') return;
+                    // Sync the controlled input for every reason (incl. 'reset' on
+                    // select and 'clear'); otherwise it stays stuck on the typed
+                    // prefix instead of the picked tag's name. Fetch only on typing.
                     setInputValue(newInputValue);
-                    await fetchMatchingOptions(newInputValue);
+                    if (reason === 'input') await fetchMatchingOptions(newInputValue);
                 }}
                 onClose={() => setOptions([])}
                 noOptionsText={noOptionsText}

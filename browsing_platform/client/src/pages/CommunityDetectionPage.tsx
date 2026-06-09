@@ -1,4 +1,4 @@
-import React, {useMemo, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {useSearchParams} from 'react-router';
 import {
     Alert,
@@ -16,10 +16,14 @@ import {
     FormControlLabel,
     IconButton,
     Link,
+    Pagination,
     Paper,
+    Skeleton,
     Snackbar,
     Stack,
     TextField,
+    ToggleButton,
+    ToggleButtonGroup,
     Tooltip,
     Typography,
 } from '@mui/material';
@@ -32,8 +36,15 @@ import AutoModeIcon from '@mui/icons-material/AutoMode';
 import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined';
 import FileUploadOutlinedIcon from '@mui/icons-material/FileUploadOutlined';
 import UndoIcon from '@mui/icons-material/Undo';
+import ViewListIcon from '@mui/icons-material/ViewList';
+import ViewAgendaIcon from '@mui/icons-material/ViewAgenda';
 import TopNavBar from '../UIComponents/TopNavBar/TopNavBar';
-import {SearchResultThumbnails} from '../UIComponents/SearchResults/SearchResultParts';
+import AccountBlock from '../UIComponents/CommunityDetection/AccountBlock';
+import AccountDisplayFilters, {
+    DEFAULT_DISPLAY_FILTERS,
+    DisplayFilters,
+    isDisplayFilterActive,
+} from '../UIComponents/CommunityDetection/AccountDisplayFilters';
 import NumberField from '../UIComponents/MUINumberField/NumberField';
 import SearchPanel from '../UIComponents/Search/SearchPanel';
 import QuickAccessTypeDropdown from '../UIComponents/Tags/QuickAccessTypeDropdown';
@@ -43,12 +54,15 @@ import {
     CandidateAccount,
     CommunityCandidatesResponse,
     DEFAULT_TIE_WEIGHTS,
+    DismissedAccount,
     fetchCommunityCandidates,
+    fetchKernelDetails,
     fetchRelatedTagStats,
     fetchTagKernelAccounts,
     fetchTagsForSearchResults,
     ISearchQuery,
     removeAccountTag,
+    saveTagDismissals,
     SearchResult,
     TagKernelAccount,
     TagKernelResponse,
@@ -56,13 +70,13 @@ import {
     TieWeights,
 } from '../services/DataFetcher';
 import {IQuickAccessTypeDropdown, ITagStat, ITagWithType} from '../types/tags';
-import RelatedTagDistributionTable from '../UIComponents/Tags/RelatedTagDistributionTable';
 import {downloadTextFile} from '../services/utils';
 
 const EMPTY_ID_SET = new Set<number>();
 const COMMUNITY_TAG_PLACEHOLDER = 'Assign Community Tag';
 const BASE_TITLE = 'Community Detection | Browsing Platform';
 const COMMUNITY_TAG_PARAM = 'communityTag';
+const KERNEL_PAGE_SIZE = 20;
 const stripThumbnails = <T extends { thumbnails?: Thumbnail[] }>(obj: T): T => ({...obj, thumbnails: []});
 
 // ── Serialisable state (export / import) ──────────────────────────────────────
@@ -99,6 +113,30 @@ function candidateTitle(c: Pick<CandidateAccount, 'id' | 'url_suffix' | 'display
     return c.display_name
         ? `${c.url_suffix} (${c.display_name})`
         : (c.url_suffix ?? `Account ${c.id}`);
+}
+
+// A persisted dismissal carries only the fields needed to render its chip and
+// filter it out of the candidates list; the rest of CandidateAccount defaults
+// to zero/null (these accounts are dismissed, so their stats are never shown).
+function dismissedToCandidate(d: DismissedAccount): CandidateAccount {
+    return {
+        id: d.id,
+        url_suffix: d.url_suffix,
+        display_name: d.display_name,
+        bio: null,
+        is_verified: null,
+        score: 0,
+        kernel_connections: 0,
+        thumbnails: [],
+        media_count: 0,
+        follower_count: 0,
+        following_count: 0,
+        post_count: 0,
+    };
+}
+
+function candidateToDismissed(c: CandidateAccount): DismissedAccount {
+    return {id: c.id, url_suffix: c.url_suffix, display_name: c.display_name};
 }
 
 function tagKernelAccountToSearchResult(a: TagKernelAccount): SearchResult {
@@ -245,152 +283,143 @@ function CandidateCard({
                            tagDistributionLoading,
                            onTagDistributionOpen,
                        }: CandidateCardProps) {
-    const title = candidateTitle(candidate);
-    const score = candidate.score % 1 === 0
-        ? candidate.score.toString()
-        : candidate.score.toFixed(2);
     return (
-        <Stack direction="row" gap={2} alignItems="flex-start" sx={{py: 0.5}}>
-            {/* Score column */}
-            <Tooltip
-                arrow
-                placement="right"
-                enterDelay={100}
-                leaveDelay={100}
-                onOpen={onTagDistributionOpen}
-                slotProps={{
-                    tooltip: {
-                        sx: {
-                            bgcolor: 'background.paper',
-                            color: 'text.primary',
-                            border: '1px solid',
-                            borderColor: 'divider',
-                            boxShadow: 3,
-                            maxWidth: 'none',
-                        },
-                    },
-                    arrow: {
-                        sx: {
-                            color: 'background.paper',
-                            '&::before': {
-                                border: '1px solid',
-                                borderColor: 'divider',
-                                boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
-                            },
-                        },
-                    },
-                }}
-                title={
-                    tagDistributionLoading
-                        ? <CircularProgress size={16}/>
-                        : <RelatedTagDistributionTable stats={tagDistribution ?? []}/>
-                }
-            >
-                <Box sx={{
-                    flexShrink: 0, width: 56, textAlign: 'center',
-                    pt: 0.5, borderRight: '1px solid', borderColor: 'divider', pr: 2,
-                    cursor: 'help',
-                }}>
-                    <Typography variant="h5"
-                                sx={{fontWeight: 700, lineHeight: 1, color: 'primary.main', fontSize: '1.5rem'}}>
-                        {score}
-                    </Typography>
-                    <Typography variant="caption" sx={{
-                        color: 'text.disabled',
-                        display: 'block',
-                        mt: 0.25,
-                        letterSpacing: '0.05em',
-                        textTransform: 'uppercase',
-                        fontSize: '0.6rem'
-                    }}>
-                        score
-                    </Typography>
-                </Box>
-            </Tooltip>
-
-            {/* Content */}
-            <Box sx={{flex: 1, minWidth: 0}}>
-                <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">
-                    <a href={`/account/${candidate.id}`} target="_blank" rel="noopener noreferrer"
-                       style={{textDecoration: 'none', color: 'inherit'}}>
-                        <Typography variant="subtitle1" sx={{
-                            fontWeight: 600,
-                            wordBreak: 'break-word',
-                            '&:hover': {textDecoration: 'underline'}
-                        }}>
-                            {title}
-                        </Typography>
-                    </a>
-                    {candidate.is_verified && (
-                        <Chip label="Verified" size="small" color="info" variant="outlined"
-                              sx={{height: 18, '& .MuiChip-label': {px: 0.75, fontSize: '0.6rem'}}}/>
-                    )}
-                </Stack>
-                {candidate.bio && (
-                    <Typography variant="body2" color="text.secondary" sx={{mt: 0.25, fontSize: '0.8125rem'}}>
-                        {candidate.bio}
-                    </Typography>
-                )}
-                <SearchResultThumbnails thumbnails={candidate.thumbnails} totalCount={candidate.media_count}/>
-            </Box>
-
-            {/* Decision panel */}
-            <Box
-                sx={{
-                    flexShrink: 0,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'stretch',
-                    gap: 0.5,
-                    borderLeft: '1px solid',
-                    borderColor: 'divider',
-                    pl: 1.5,
-                    minWidth: 148,
-                }}
-            >
-                {communityDropdown && (
-                    <>
-                        <Typography
-                            variant="caption"
-                            sx={{
-                                color: 'text.disabled',
-                                fontSize: '0.6rem',
-                                letterSpacing: '0.08em',
-                                textTransform: 'uppercase',
-                                lineHeight: 1,
-                            }}
-                        >
-                            Tag &amp; add to kernel
-                        </Typography>
-                        <QuickAccessTypeDropdown
-                            dropdown={communityDropdown}
-                            assignedTagIds={assignedCommunityTagIds}
-                            onSelect={onTagToggle}
-                            placeholder={COMMUNITY_TAG_PLACEHOLDER}
-                        />
-                        <Divider flexItem sx={{my: 0.25}}>
-                            <Typography variant="caption" color="text.disabled" sx={{fontSize: '0.65rem'}}>
-                                or
+        <AccountBlock
+            id={candidate.id}
+            title={candidateTitle(candidate)}
+            bio={candidate.bio}
+            isVerified={candidate.is_verified}
+            thumbnails={candidate.thumbnails}
+            mediaCount={candidate.media_count}
+            followerCount={candidate.follower_count}
+            followingCount={candidate.following_count}
+            postCount={candidate.post_count}
+            score={candidate.score}
+            tagDistribution={tagDistribution}
+            tagDistributionLoading={tagDistributionLoading}
+            onTagDistributionOpen={onTagDistributionOpen}
+            actions={
+                <>
+                    {communityDropdown && (
+                        <>
+                            <Typography
+                                variant="caption"
+                                sx={{
+                                    color: 'text.disabled',
+                                    fontSize: '0.6rem',
+                                    letterSpacing: '0.08em',
+                                    textTransform: 'uppercase',
+                                    lineHeight: 1,
+                                }}
+                            >
+                                Tag &amp; add to kernel
                             </Typography>
-                        </Divider>
-                    </>
-                )}
-                <Button
-                    size="small" variant="outlined" color={"success"}
-                    onClick={onAddToKernel}
-                    sx={{whiteSpace: 'nowrap', fontSize: '0.75rem'}}
+                            <QuickAccessTypeDropdown
+                                dropdown={communityDropdown}
+                                assignedTagIds={assignedCommunityTagIds}
+                                onSelect={onTagToggle}
+                                placeholder={COMMUNITY_TAG_PLACEHOLDER}
+                            />
+                            <Divider flexItem sx={{my: 0.25}}>
+                                <Typography variant="caption" color="text.disabled" sx={{fontSize: '0.65rem'}}>
+                                    or
+                                </Typography>
+                            </Divider>
+                        </>
+                    )}
+                    <Button
+                        size="small" variant="outlined" color={"success"}
+                        onClick={onAddToKernel}
+                        sx={{whiteSpace: 'nowrap', fontSize: '0.75rem'}}
+                    >
+                        {communityDropdown ? 'Add to kernel without attaching tag' : 'Add to kernel'}
+                    </Button>
+                    <Button
+                        size="small" variant="outlined" color="error"
+                        onClick={onExclude}
+                        sx={{fontSize: '0.75rem'}}
+                    >
+                        Remove from Candidates List
+                    </Button>
+                </>
+            }
+        />
+    );
+}
+
+// ── Kernel account card (expanded view) ───────────────────────────────────────
+
+interface KernelAccountCardProps {
+    entry: KernelEntry;
+    detail?: CandidateAccount;
+    loading: boolean;
+    communityDropdown: IQuickAccessTypeDropdown | null;
+    onTakeOut: () => void;
+    tagDistribution?: ITagStat[];
+    tagDistributionLoading: boolean;
+    onTagDistributionOpen: () => void;
+}
+
+function KernelAccountCard({
+                               entry,
+                               detail,
+                               loading,
+                               communityDropdown,
+                               onTakeOut,
+                               tagDistribution,
+                               tagDistributionLoading,
+                               onTagDistributionOpen,
+                           }: KernelAccountCardProps) {
+    const tagSources = entry.tagSources;
+    const removesTags = !!communityDropdown && tagSources.length > 0;
+
+    if (!detail && loading) {
+        return (
+            <Stack direction="row" gap={2} alignItems="center" sx={{py: 0.5}}>
+                <Skeleton variant="rectangular" width={56} height={40}/>
+                <Box sx={{flex: 1, minWidth: 0}}>
+                    <Skeleton variant="text" width="40%"/>
+                    <Skeleton variant="rectangular" height={100} sx={{mt: 1, maxWidth: 320}}/>
+                </Box>
+                <Skeleton variant="rectangular" width={148} height={32}/>
+            </Stack>
+        );
+    }
+
+    return (
+        <AccountBlock
+            id={entry.account.id}
+            title={detail ? candidateTitle(detail) : entry.account.title}
+            bio={detail?.bio}
+            isVerified={detail?.is_verified}
+            thumbnails={detail?.thumbnails ?? []}
+            mediaCount={detail?.media_count ?? 0}
+            followerCount={detail?.follower_count ?? 0}
+            followingCount={detail?.following_count ?? 0}
+            postCount={detail?.post_count ?? 0}
+            score={detail?.score ?? 0}
+            tagDistribution={tagDistribution}
+            tagDistributionLoading={tagDistributionLoading}
+            onTagDistributionOpen={onTagDistributionOpen}
+            actions={
+                <Tooltip
+                    title={removesTags
+                        ? `Removes the tag(s) ${tagSources.map(t => t.name).join(', ')} before taking the account out of the kernel`
+                        : ''}
+                    disableHoverListener={!removesTags}
                 >
-                    {communityDropdown ? 'Add to kernel without attaching tag' : 'Add to kernel'}
-                </Button>
-                <Button
-                    size="small" variant="outlined" color="error"
-                    onClick={onExclude}
-                    sx={{fontSize: '0.75rem'}}
-                >
-                    Remove from Candidates List
-                </Button>
-            </Box>
-        </Stack>
+                    <Button
+                        size="small" variant="outlined" color="error"
+                        onClick={onTakeOut}
+                        sx={{fontSize: '0.75rem'}}
+                    >
+                        {removesTags
+                            ? `Remove tag(s) ${tagSources.map(t => t.name).join(', ')} & take out of kernel`
+                            : 'Take out of kernel'}
+                    </Button>
+                </Tooltip>
+            }
+        />
     );
 }
 
@@ -417,6 +446,22 @@ export default function CommunityDetectionPage() {
     const [kernelEntries, setKernelEntries] = useState<KernelEntry[]>([]);
     const [kernelModalOpen, setKernelModalOpen] = useState(false);
 
+    // Kernel display: compact pills vs. expanded rich blocks. Detail (scores,
+    // thumbnails) for the expanded view is fetched on demand and is intentionally
+    // NOT part of the exported state.
+    const [kernelExpandedView, setKernelExpandedView] = useState(false);
+    const [kernelDetails, setKernelDetails] = useState<Record<number, CandidateAccount>>({});
+    const [kernelDetailsLoading, setKernelDetailsLoading] = useState(false);
+    const [kernelPage, setKernelPage] = useState(1);
+
+    // Confirmation before removing the community tag(s) that justify a kernel
+    // member's inclusion and taking it out of the kernel (tag mode only).
+    const [pendingKernelTagRemoval, setPendingKernelTagRemoval] = useState<KernelEntry | null>(null);
+
+    // Display filters: visually hide entries by scraping state. Shared by the
+    // kernel (expanded view only) and the candidates list; never exported.
+    const [displayFilters, setDisplayFilters] = useState<DisplayFilters>(DEFAULT_DISPLAY_FILTERS);
+
     // Community tag / tag mode
     const [communityTag, setCommunityTag] = useState<ITagWithType | null>(null);
     const [communityDropdown, setCommunityDropdown] = useState<IQuickAccessTypeDropdown | null>(null);
@@ -426,6 +471,7 @@ export default function CommunityDetectionPage() {
         tag: ITagWithType;
         tagKernelAccounts: TagKernelAccount[];
         dropdown: IQuickAccessTypeDropdown;
+        dismissals: DismissedAccount[];
     } | null>(null);
     const [tagTransitionApplyToExisting, setTagTransitionApplyToExisting] = useState(false);
     const [tagTransitionLoading, setTagTransitionLoading] = useState(false);
@@ -443,6 +489,10 @@ export default function CommunityDetectionPage() {
 
     // Weights
     const [weights, setWeights] = useState<TieWeights>({...DEFAULT_TIE_WEIGHTS});
+    // Weights as of the last Run Analysis. The live `weights` drive the inputs and
+    // are only committed here on Run Analysis, so the kernel expanded-view scores
+    // refresh on the same trigger as the candidates list — not on every keystroke.
+    const [appliedWeights, setAppliedWeights] = useState<TieWeights>({...DEFAULT_TIE_WEIGHTS});
 
     // Candidates
     const [candidates, setCandidates] = useState<CandidateAccount[]>([]);
@@ -503,6 +553,7 @@ export default function CommunityDetectionPage() {
                         manuallyAdded: false,
                         tagSources: a.applied_tags,
                     })));
+                    setExcludedAccounts(resp.dismissals.map(dismissedToCandidate));
                 }
             } finally {
                 if (!cancelled) {
@@ -543,6 +594,25 @@ export default function CommunityDetectionPage() {
     const visibleCandidates = useMemo(() => candidates.filter(c => !excludedIdSet.has(c.id)), [candidates, excludedIdSet]);
     const hasVerifiedVisible = useMemo(() => visibleCandidates.some(c => c.is_verified === true), [visibleCandidates]);
 
+    // Display-filter predicate (true => hidden). Operates on per-account scraped
+    // relation / post counts. Used for candidates (always) and kernel members
+    // (expanded view only).
+    const isHiddenByFilters = React.useCallback((c: Pick<CandidateAccount, 'follower_count' | 'following_count' | 'post_count'>): boolean => {
+        const relations = c.follower_count + c.following_count;
+        if (displayFilters.relationsMode === 'over' && !(relations > displayFilters.relationsThreshold)) return true;
+        if (displayFilters.relationsMode === 'under' && !(relations < displayFilters.relationsThreshold)) return true;
+        if (displayFilters.postsMode === 'has' && !(c.post_count >= 1)) return true;
+        if (displayFilters.postsMode === 'none' && !(c.post_count === 0)) return true;
+        return false;
+    }, [displayFilters]);
+
+    const displayFiltersActive = isDisplayFilterActive(displayFilters);
+
+    const shownCandidates = useMemo(
+        () => visibleCandidates.filter(c => !isHiddenByFilters(c)),
+        [visibleCandidates, isHiddenByFilters],
+    );
+
     const communityTagIds = useMemo(
         () => communityDropdown ? new Set(communityDropdown.tags.map(t => t.id!)) : new Set<number>(),
         [communityDropdown],
@@ -566,21 +636,86 @@ export default function CommunityDetectionPage() {
         [candidateCommunityTags],
     );
 
+    // ── Kernel expanded-view detail ───────────────────────────────────────────
+
+    // Fetch per-account detail (score against the rest of the kernel, thumbnails)
+    // when the expanded view is active. Re-runs whenever kernel membership changes
+    // (every member's score depends on the full kernel composition) or the applied
+    // weights change (committed on Run Analysis, so this does not refetch on every
+    // weight keystroke). This detail is never exported.
+    useEffect(() => {
+        if (!kernelExpandedView || kernelIds.length === 0) return;
+        let cancelled = false;
+        setKernelDetailsLoading(true);
+        fetchKernelDetails(kernelIds, appliedWeights)
+            .then(resp => {
+                if (cancelled) return;
+                const map: Record<number, CandidateAccount> = {};
+                for (const c of resp.candidates) map[c.id] = c;
+                setKernelDetails(map);
+            })
+            .finally(() => {
+                if (!cancelled) setKernelDetailsLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [kernelExpandedView, kernelIds, appliedWeights]);
+
+    // Kernel entries after display filters. Filtering only applies in expanded
+    // view (compact pills and their copy stay unfiltered). An entry whose detail
+    // hasn't loaded yet is treated as not-hidden so it shows while loading.
+    const filteredKernelEntries = useMemo(
+        () => kernelExpandedView
+            ? kernelEntries.filter(e => {
+                const d = kernelDetails[e.account.id];
+                return !d || !isHiddenByFilters(d);
+            })
+            : kernelEntries,
+        [kernelExpandedView, kernelEntries, kernelDetails, isHiddenByFilters],
+    );
+
+    const kernelPageCount = Math.max(1, Math.ceil(filteredKernelEntries.length / KERNEL_PAGE_SIZE));
+    const clampedKernelPage = Math.min(kernelPage, kernelPageCount);
+    const pagedKernelEntries = useMemo(
+        () => filteredKernelEntries.slice((clampedKernelPage - 1) * KERNEL_PAGE_SIZE, clampedKernelPage * KERNEL_PAGE_SIZE),
+        [filteredKernelEntries, clampedKernelPage],
+    );
+
     // ── Community tag selection ───────────────────────────────────────────────
+
+    // Discard the current suggestions list (and everything derived from the last
+    // run). Called whenever the tag binding changes, since a suggestions list
+    // computed for the previous binding would be stale and confusing.
+    const resetSuggestions = () => {
+        setCandidates([]);
+        setCandidateAllTags({});
+        setCandidateTagDistributions({});
+        setLoadingTagDistributions({});
+        setHasRun(false);
+    };
 
     const handleCommunityTagChange = async (tag: ITagWithType | null) => {
         if (!tag) {
             // Clear tag mode: keep kernel entries but clear tagSources indicators
             setCommunityTag(null);
             setCommunityDropdown(null);
+            resetSuggestions();
             return;
         }
 
         setTagTransitionLoading(true);
         try {
             const resp: TagKernelResponse = await fetchTagKernelAccounts(tag.id!);
-            if (kernelEntries.length === 0) {
-                // No existing kernel — set directly without warning
+            // The transition popup (with its "attach tag to existing kernel"
+            // option) is only useful when going from ad-hoc mode to tag-bound
+            // mode — the user built an ad-hoc kernel and now wants to bind it to
+            // a tag. When already tag-bound (switching tag A → tag B), the
+            // existing kernel belongs to tag A and the user won't want to carry
+            // it over to tag B, so we skip the popup and load tag B fresh,
+            // exactly as if it had been selected from a clean state.
+            if (kernelEntries.length === 0 || communityTag) {
+                // No existing kernel, or already tag-bound — set directly.
                 setCommunityTag(tag);
                 setCommunityDropdown(resp.dropdown);
                 const newEntries: KernelEntry[] = resp.accounts.map(a => ({
@@ -589,12 +724,15 @@ export default function CommunityDetectionPage() {
                     tagSources: a.applied_tags,
                 }));
                 setKernelEntries(newEntries);
+                setExcludedAccounts(resp.dismissals.map(dismissedToCandidate));
+                resetSuggestions();
             } else {
-                // Kernel already populated — ask for confirmation
+                // Ad-hoc kernel populated — ask for confirmation
                 setTagTransitionPending({
                     tag,
                     tagKernelAccounts: resp.accounts,
                     dropdown: resp.dropdown,
+                    dismissals: resp.dismissals,
                 });
                 setTagTransitionApplyToExisting(false);
             }
@@ -605,7 +743,7 @@ export default function CommunityDetectionPage() {
 
     const confirmTagTransition = async () => {
         if (!tagTransitionPending) return;
-        const {tag, tagKernelAccounts, dropdown} = tagTransitionPending;
+        const {tag, tagKernelAccounts, dropdown, dismissals} = tagTransitionPending;
 
         // Optionally attach the tag to all accounts currently in the kernel
         if (tagTransitionApplyToExisting && kernelIds.length > 0) {
@@ -628,6 +766,9 @@ export default function CommunityDetectionPage() {
                 tagSources: a.applied_tags,
             }));
         setKernelEntries(prev => [...prev, ...newEntries]);
+
+        // Now bound to this tag — its saved dismissals replace any prior list.
+        setExcludedAccounts(dismissals.map(dismissedToCandidate));
 
         setCommunityTag(tag);
         setCommunityDropdown(dropdown);
@@ -652,6 +793,27 @@ export default function CommunityDetectionPage() {
 
     const removeFromKernel = (id: number) => {
         setKernelEntries(prev => prev.filter(e => e.account.id !== id));
+    };
+
+    // Take an account out of the kernel. In tag mode, an account tagged with the
+    // community tag (or a subtag) would be re-seeded on the next tag load, so its
+    // justifying tag(s) must be removed first — confirmed via a dialog.
+    const takeOutOfKernel = (entry: KernelEntry) => {
+        if (communityDropdown && entry.tagSources.length > 0) {
+            setPendingKernelTagRemoval(entry);
+        } else {
+            removeFromKernel(entry.account.id);
+        }
+    };
+
+    const confirmKernelTagRemoval = async () => {
+        const entry = pendingKernelTagRemoval;
+        if (!entry) return;
+        for (const tag of entry.tagSources) {
+            await removeAccountTag(entry.account.id, tag.id!);
+        }
+        removeFromKernel(entry.account.id);
+        setPendingKernelTagRemoval(null);
     };
 
     // Toggle a community tag on a kernel entry
@@ -697,6 +859,9 @@ export default function CommunityDetectionPage() {
                 kernelIds, excludedIds, weights
             );
             setCandidates(resp.candidates);
+            // Commit the weights used for this run so the kernel expanded-view
+            // scores refresh against the same weights as the candidates.
+            setAppliedWeights(weights);
             setHasRun(true);
 
             // In tag mode, bulk-fetch community tags for all returned candidates
@@ -774,16 +939,33 @@ export default function CommunityDetectionPage() {
         }
     };
 
+    // In tag-bound mode, dismissals are persisted to the tag so they survive a
+    // reload of the page for the same tag. The tag's own list only — the tag
+    // hierarchy is intentionally not consulted. Fire-and-forget; a failed save
+    // just means the dismissal isn't remembered across reloads.
+    const persistDismissals = (next: CandidateAccount[]) => {
+        const tagId = communityTag?.id;
+        if (tagId == null) return;
+        saveTagDismissals(tagId, next.map(candidateToDismissed)).catch(() => {
+        });
+    };
+
     const excludeCandidate = (candidate: CandidateAccount) => {
-        setExcludedAccounts(prev => [...prev, candidate]);
+        const next = [...excludedAccounts, candidate];
+        setExcludedAccounts(next);
+        persistDismissals(next);
     };
 
     const restoreCandidate = (id: number) => {
-        setExcludedAccounts(prev => prev.filter(a => a.id !== id));
+        const next = excludedAccounts.filter(a => a.id !== id);
+        setExcludedAccounts(next);
+        persistDismissals(next);
     };
 
     const autoRemoveVerified = () => {
-        setExcludedAccounts(prev => [...prev, ...visibleCandidates.filter(c => c.is_verified === true)]);
+        const next = [...excludedAccounts, ...visibleCandidates.filter(c => c.is_verified === true)];
+        setExcludedAccounts(next);
+        persistDismissals(next);
     };
 
     // ── Export / import ───────────────────────────────────────────────────────
@@ -791,9 +973,13 @@ export default function CommunityDetectionPage() {
     const copyKernelAsCsv = async () => {
         const escapeCell = (v: string) =>
             /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+        // In expanded view the copy reflects the active display filters (only
+        // un-hidden members are copied); in compact view there is no filtering.
+        const entriesToCopy = kernelExpandedView ? filteredKernelEntries : kernelEntries;
+        const hidden = kernelEntries.length - entriesToCopy.length;
         const rows: string[] = ['url,tags'];
         let skipped = 0;
-        for (const entry of kernelEntries) {
+        for (const entry of entriesToCopy) {
             const suffix = entry.account.metadata?.url_suffix as string | null | undefined;
             if (!suffix) {
                 skipped++;
@@ -807,10 +993,40 @@ export default function CommunityDetectionPage() {
         try {
             await navigator.clipboard.writeText(csv);
             const copied = rows.length - 1;
-            const suffix = skipped > 0 ? ` (${skipped} skipped — no url_suffix)` : '';
+            const hiddenNote = hidden > 0 ? ` (${hidden} hidden by filters)` : '';
+            const skippedNote = skipped > 0 ? ` (${skipped} skipped — no url_suffix)` : '';
             setCopyFeedback({
                 severity: 'success',
-                message: `Copied ${copied} row${copied === 1 ? '' : 's'} to clipboard${suffix}`,
+                message: `Copied ${copied} row${copied === 1 ? '' : 's'} to clipboard${hiddenNote}${skippedNote}`,
+            });
+        } catch (err) {
+            setCopyFeedback({
+                severity: 'error',
+                message: `Failed to copy: ${err instanceof Error ? err.message : String(err)}`,
+            });
+        }
+    };
+
+    // Copy the candidate URLs (after display filters) as a newline-delimited
+    // list. Unlike the kernel copy there is no tags column — by definition a
+    // suggestion is not tagged with the community tag (or a subtag) — so a
+    // single-column, header-less list of URLs is enough.
+    const copyCandidatesAsUrls = async () => {
+        const urls: string[] = [];
+        let skipped = 0;
+        for (const candidate of shownCandidates) {
+            if (!candidate.url_suffix) {
+                skipped++;
+                continue;
+            }
+            urls.push(`https://www.instagram.com/${candidate.url_suffix}/`);
+        }
+        try {
+            await navigator.clipboard.writeText(urls.join('\n'));
+            const skippedNote = skipped > 0 ? ` (${skipped} skipped — no url_suffix)` : '';
+            setCopyFeedback({
+                severity: 'success',
+                message: `Copied ${urls.length} URL${urls.length === 1 ? '' : 's'} to clipboard${skippedNote}`,
             });
         } catch (err) {
             setCopyFeedback({
@@ -1066,6 +1282,36 @@ export default function CommunityDetectionPage() {
                     </DialogActions>
                 </Dialog>
 
+                {/* ── Remove community tag(s) + take out of kernel modal ────── */}
+                <Dialog
+                    open={pendingKernelTagRemoval !== null}
+                    onClose={() => setPendingKernelTagRemoval(null)}
+                    maxWidth="sm"
+                    fullWidth
+                >
+                    <DialogTitle>Remove Tag(s) and Take Out of Kernel?</DialogTitle>
+                    <DialogContent dividers>
+                        <Typography variant="body2">
+                            <strong>{pendingKernelTagRemoval?.account.title}</strong> is in the kernel because of
+                            the following community tag(s), which will be <strong>removed from the account in the
+                            database</strong> before it is taken out of the kernel:
+                        </Typography>
+                        <Box component="ul" sx={{pl: 2.5, mt: 1, mb: 0}}>
+                            {pendingKernelTagRemoval?.tagSources.map(t => (
+                                <li key={t.id}>
+                                    <Typography variant="body2">{t.name}</Typography>
+                                </li>
+                            ))}
+                        </Box>
+                    </DialogContent>
+                    <DialogActions>
+                        <Button onClick={() => setPendingKernelTagRemoval(null)}>Cancel</Button>
+                        <Button variant="contained" color="error" onClick={confirmKernelTagRemoval}>
+                            Remove tag(s) &amp; take out
+                        </Button>
+                    </DialogActions>
+                </Dialog>
+
                 {/* ── Tag transition confirmation modal ─────────────────────── */}
                 <Dialog
                     open={tagTransitionPending !== null}
@@ -1158,7 +1404,32 @@ export default function CommunityDetectionPage() {
                             title="Kernel — Seed Accounts"
                             active={kernelEntries.length > 0}
                             action={
-                                <Stack direction="row" spacing={1}>
+                                <Stack direction="row" spacing={1} alignItems="center">
+                                    {kernelEntries.length > 0 && kernelExpandedView && (
+                                        <AccountDisplayFilters value={displayFilters} onChange={setDisplayFilters}/>
+                                    )}
+                                    {kernelEntries.length > 0 && (
+                                        <ToggleButtonGroup
+                                            size="small"
+                                            exclusive
+                                            value={kernelExpandedView ? 'expanded' : 'compact'}
+                                            onChange={(_, v) => {
+                                                if (v !== null) setKernelExpandedView(v === 'expanded');
+                                            }}
+                                            sx={{flexShrink: 0}}
+                                        >
+                                            <ToggleButton value="compact">
+                                                <Tooltip title="Compact view">
+                                                    <ViewListIcon fontSize="small"/>
+                                                </Tooltip>
+                                            </ToggleButton>
+                                            <ToggleButton value="expanded">
+                                                <Tooltip title="Expanded view — show media & scores">
+                                                    <ViewAgendaIcon fontSize="small"/>
+                                                </Tooltip>
+                                            </ToggleButton>
+                                        </ToggleButtonGroup>
+                                    )}
                                     <Tooltip title="Copy kernel as CSV (url, tags)">
                                         <span>
                                             <Button
@@ -1189,17 +1460,54 @@ export default function CommunityDetectionPage() {
                         />
 
                         {kernelEntries.length > 0 ? (
-                            <Stack direction="row" flexWrap="wrap" gap={1}>
-                                {kernelEntries.map(entry => (
-                                    <KernelAccountPill
-                                        key={entry.account.id}
-                                        entry={entry}
-                                        communityDropdown={communityDropdown}
-                                        onRemove={() => removeFromKernel(entry.account.id)}
-                                        onTagToggle={(tag) => handleKernelTagToggle(entry, tag)}
-                                    />
-                                ))}
-                            </Stack>
+                            kernelExpandedView ? (
+                                filteredKernelEntries.length === 0 ? (
+                                    <Typography color="text.secondary" variant="body2">
+                                        No kernel accounts match the current display filters.
+                                    </Typography>
+                                ) : (
+                                <>
+                                    <Stack spacing={0} divider={<Divider/>}>
+                                        {pagedKernelEntries.map(entry => (
+                                            <KernelAccountCard
+                                                key={entry.account.id}
+                                                entry={entry}
+                                                detail={kernelDetails[entry.account.id]}
+                                                loading={kernelDetailsLoading}
+                                                communityDropdown={communityDropdown}
+                                                onTakeOut={() => takeOutOfKernel(entry)}
+                                                tagDistribution={candidateTagDistributions[entry.account.id]}
+                                                tagDistributionLoading={!!loadingTagDistributions[entry.account.id]}
+                                                onTagDistributionOpen={() => loadCandidateTagDistribution(entry.account.id)}
+                                            />
+                                        ))}
+                                    </Stack>
+                                    {kernelPageCount > 1 && (
+                                        <Stack direction="row" justifyContent="center" sx={{mt: 1.5}}>
+                                            <Pagination
+                                                count={kernelPageCount}
+                                                page={clampedKernelPage}
+                                                onChange={(_, p) => setKernelPage(p)}
+                                                size="small"
+                                                color="primary"
+                                            />
+                                        </Stack>
+                                    )}
+                                </>
+                                )
+                            ) : (
+                                <Stack direction="row" flexWrap="wrap" gap={1}>
+                                    {kernelEntries.map(entry => (
+                                        <KernelAccountPill
+                                            key={entry.account.id}
+                                            entry={entry}
+                                            communityDropdown={communityDropdown}
+                                            onRemove={() => removeFromKernel(entry.account.id)}
+                                            onTagToggle={(tag) => handleKernelTagToggle(entry, tag)}
+                                        />
+                                    ))}
+                                </Stack>
+                            )
                         ) : (
                             <Box
                                 onClick={() => setKernelModalOpen(true)}
@@ -1298,33 +1606,54 @@ export default function CommunityDetectionPage() {
                                        sx={{mb: 1.5}}>
                                     <Typography variant="subtitle1" sx={{fontWeight: 600}}>
                                         Top Candidates
-                                        {visibleCandidates.length > 0 && (
+                                        {shownCandidates.length > 0 && (
                                             <Typography component="span" variant="body2" color="text.secondary"
                                                         sx={{ml: 1}}>
-                                                {visibleCandidates.length} result{visibleCandidates.length !== 1 ? 's' : ''}
+                                                {shownCandidates.length} result{shownCandidates.length !== 1 ? 's' : ''}
                                             </Typography>
                                         )}
                                     </Typography>
-                                    <Tooltip
-                                        title={hasVerifiedVisible ? 'Remove all verified accounts from candidates list to screen out celebs and brands' : 'No verified accounts in current results'}>
-                                        <span>
-                                            <Button variant="outlined" size="small" disabled={!hasVerifiedVisible}
-                                                    onClick={autoRemoveVerified} sx={{flexShrink: 0}}>
-                                                Remove Verified
-                                            </Button>
-                                        </span>
-                                    </Tooltip>
+                                    <Stack direction="row" spacing={1} alignItems="center">
+                                        <AccountDisplayFilters value={displayFilters} onChange={setDisplayFilters}/>
+                                        <Tooltip
+                                            title={displayFiltersActive
+                                                ? 'Clear the display filters to remove verified accounts — otherwise it would also remove verified accounts hidden by the current filters'
+                                                : hasVerifiedVisible ? 'Remove all verified accounts from candidates list to screen out celebs and brands' : 'No verified accounts in current results'}>
+                                            <span>
+                                                <Button variant="outlined" size="small"
+                                                        disabled={!hasVerifiedVisible || displayFiltersActive}
+                                                        onClick={autoRemoveVerified} sx={{flexShrink: 0}}>
+                                                    Remove Verified
+                                                </Button>
+                                            </span>
+                                        </Tooltip>
+                                        <Tooltip title="Copy candidate URLs (one per line) to clipboard">
+                                            <span>
+                                                <Button
+                                                    variant="outlined" size="small"
+                                                    startIcon={<ContentCopyIcon/>}
+                                                    disabled={shownCandidates.length === 0}
+                                                    onClick={copyCandidatesAsUrls}
+                                                    sx={{flexShrink: 0}}
+                                                >
+                                                    Copy to clipboard
+                                                </Button>
+                                            </span>
+                                        </Tooltip>
+                                    </Stack>
                                 </Stack>
 
-                                {visibleCandidates.length === 0 ? (
+                                {shownCandidates.length === 0 ? (
                                     <Typography color="text.secondary" variant="body2">
-                                        {candidates.length > 0
-                                            ? 'All candidates have been excluded.'
-                                            : 'No candidates found. Try expanding the kernel or adjusting weights.'}
+                                        {candidates.length === 0
+                                            ? 'No candidates found. Try expanding the kernel or adjusting weights.'
+                                            : visibleCandidates.length === 0
+                                                ? 'All candidates have been excluded.'
+                                                : 'No accounts match the current display filters.'}
                                     </Typography>
                                 ) : (
                                     <Stack spacing={0} divider={<Divider/>}>
-                                        {visibleCandidates.map(candidate => (
+                                        {shownCandidates.map(candidate => (
                                             <CandidateCard
                                                 key={candidate.id}
                                                 candidate={candidate}

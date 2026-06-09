@@ -395,6 +395,9 @@ export interface CandidateAccount {
     kernel_connections: number;
     thumbnails: Thumbnail[];
     media_count: number;
+    follower_count: number;
+    following_count: number;
+    post_count: number;
 }
 
 export interface CommunityCandidatesResponse {
@@ -413,6 +416,19 @@ export const fetchCommunityCandidates = async (
     });
 };
 
+// Per-account detail (score against the rest of the kernel, thumbnails, media
+// count) for accounts already in the kernel — used by the kernel "expanded
+// view". Reuses the CandidateAccount shape; excluded_ids is unused server-side.
+export const fetchKernelDetails = async (
+    kernelIds: number[],
+    weights: TieWeights,
+): Promise<CommunityCandidatesResponse> => {
+    return await server.post('community/kernel-details/', {
+        kernel_ids: kernelIds,
+        weights,
+    });
+};
+
 export interface TagKernelAccount {
     id: number;
     url_suffix: string | null;
@@ -423,15 +439,29 @@ export interface TagKernelAccount {
     applied_tags: ITagWithType[];
 }
 
+export interface DismissedAccount {
+    id: number;
+    url_suffix: string | null;
+    display_name: string | null;
+}
+
 export interface TagKernelResponse {
     accounts: TagKernelAccount[];
     dropdown: IQuickAccessTypeDropdown;
+    dismissals: DismissedAccount[];
 }
 
 export const fetchTagKernelAccounts = async (
     tagId: number,
 ): Promise<TagKernelResponse> =>
     server.get(`community/tag-kernel/${tagId}`);
+
+// Overwrite the saved candidate dismissals for a tag (tag-bound mode only).
+export const saveTagDismissals = async (
+    tagId: number,
+    dismissals: DismissedAccount[],
+): Promise<void> =>
+    server.post(`community/tag/${tagId}/dismissals`, {dismissals}, HTTP_METHODS.put);
 
 export const removeAccountTag = async (
     accountId: number,

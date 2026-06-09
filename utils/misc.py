@@ -1,8 +1,10 @@
 import json
+import os
 import platform
 import psutil
 import re
 import socket
+import sys
 import uuid
 from typing import Optional
 
@@ -28,6 +30,69 @@ def get_my_public_ip():
         return response.text.strip()
     except Exception:
         return '0.0.0.0'
+
+
+def get_ip_country(ip: Optional[str] = None) -> Optional[str]:
+    """Return the ISO 3166-1 alpha-2 country code for an IP via ip-api.com.
+
+    Looks up the caller's own public IP when `ip` is None. Returns None if the
+    lookup fails for any reason (no network, rate limited, etc.) so callers can
+    decide how to treat an inconclusive result.
+    """
+    try:
+        target = ip or ""
+        url = f"http://ip-api.com/json/{target}?fields=status,countryCode"
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        if data.get("status") != "success":
+            return None
+        return data.get("countryCode")
+    except Exception:
+        return None
+
+
+def ensure_vpn_connection(my_public_ip: Optional[str] = None) -> None:
+    """Warn (and offer to abort) if the public IP is in the operator's home country.
+
+    This is a VPN sanity check: set HOME_COUNTRY in .env to your own ISO country
+    code (e.g. "IL", "US") and connect your VPN to a *different* country before
+    archiving. If the public IP still geolocates to HOME_COUNTRY, the operator is
+    almost certainly not on the VPN and their personal IP would be recorded in the
+    archive metadata.
+
+    No-op when HOME_COUNTRY is unset, so the check is opt-in. An inconclusive
+    geo lookup (None) is treated as "can't confirm" and prompts the operator
+    rather than silently proceeding or aborting.
+    """
+    home_country = os.getenv("HOME_COUNTRY", "").strip().upper()
+    if not home_country:
+        return
+
+    detected_country = get_ip_country(my_public_ip)
+
+    if detected_country is None:
+        message = (
+            "Could not determine your public IP's country to verify the VPN "
+            "connection."
+        )
+    elif detected_country == home_country:
+        message = (
+            f"Your public IP appears to be in your home country ({home_country}). "
+            "You may NOT be connected to a VPN — your personal IP would be recorded "
+            "in the archive metadata."
+        )
+    else:
+        # Public IP is in a country other than home -> VPN looks active.
+        print(f"VPN check passed: public IP geolocates to {detected_country} "
+              f"(home country is {home_country}).")
+        return
+
+    print(f"WARNING: {message}")
+    proceed = input("Are you sure you want to proceed? (yes/no): ").strip().lower()
+    if proceed not in {"yes", "y"}:
+        print("Exiting...")
+        sys.exit(0)
 
 
 def get_system_info() -> Optional[str]:

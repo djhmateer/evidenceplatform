@@ -128,7 +128,7 @@ def batch_get_all_archives(canonical_ids: list, archive_table: str, entity_class
 
 def batch_resolve_account_fks_by_url_and_id(entities: list, url_attr: str, id_attr: str, id_field: str) -> None:
     """Batch-resolve account FK (sets `id_field` on each entity) using url and id_on_platform lookups."""
-    urls = list({getattr(e, url_attr) for e in entities if getattr(e, id_field, None) is None and getattr(e, url_attr, None)})
+    urls = list({getattr(e, url_attr) for e in entities if getattr(e, id_field, None) is None and _is_valid_identifier(getattr(e, url_attr, None))})
     ids_op = list({getattr(e, id_attr) for e in entities if getattr(e, id_field, None) is None and getattr(e, id_attr, None)})
     by_url, by_id_op = {}, {}
     if urls:
@@ -528,12 +528,15 @@ def preserve_canonical_identifiers(synthesized: EntityBase, existing_canonical: 
 # ---------------------------------------------------------------------------
 
 def get_canonical_account(account: Account) -> Optional[Account]:
+    # Never match on a null-like url_suffix ('None', 'None/', '') — distinct
+    # usernameless accounts would collide on the shared sentinel and merge.
+    url_suffix = account.url_suffix if _is_valid_identifier(account.url_suffix) else None
     entry = db.execute_query(
         """SELECT * FROM account
            WHERE (url_suffix = %(url_suffix)s AND url_suffix IS NOT NULL)
               OR (id_on_platform = %(id_on_platform)s AND id_on_platform IS NOT NULL)
            LIMIT 1""",
-        {"url_suffix": account.url_suffix, "id_on_platform": account.id_on_platform},
+        {"url_suffix": url_suffix, "id_on_platform": account.id_on_platform},
         return_type="single_row"
     )
     return Account(**entry) if entry else None
@@ -1005,7 +1008,7 @@ def store_comment(comment: Comment, existing_comment: Optional[Comment], _: Opti
             raise ValueError(f"Cannot store comment {comment.id_on_platform!r}: post not found "
                              f"(url={comment.post_url_suffix!r}, id_on_platform={comment.post_id_on_platform!r})")
         comment.post_id = stored_post.id
-    if comment.account_id is None and comment.account_url_suffix:
+    if comment.account_id is None and _is_valid_identifier(comment.account_url_suffix):
         stored_account = db.execute_query(
             "SELECT id FROM account WHERE url_suffix = %(url_suffix)s LIMIT 1",
             {"url_suffix": comment.account_url_suffix},
@@ -1185,7 +1188,7 @@ def store_post_like(like: Like, existing_like: Optional[Like], _: Optional[Path]
             raise ValueError(f"Cannot store like {like.id_on_platform!r}: post not found "
                              f"(url={like.post_url_suffix!r}, id_on_platform={like.post_id_on_platform!r})")
         like.post_id = stored_post.id
-    if like.account_id is None and like.account_url_suffix:
+    if like.account_id is None and _is_valid_identifier(like.account_url_suffix):
         stored_account = db.execute_query(
             "SELECT id FROM account WHERE url_suffix = %(url)s LIMIT 1",
             {"url": like.account_url_suffix},
@@ -1326,7 +1329,7 @@ def get_all_archives_for_canonical_tagged_account(canonical_id: int) -> list[Tag
 
 
 def store_tagged_account(ta: TaggedAccount, existing_ta: Optional[TaggedAccount], _: Optional[Path]) -> int:
-    if ta.tagged_account_id is None and ta.tagged_account_url_suffix:
+    if ta.tagged_account_id is None and _is_valid_identifier(ta.tagged_account_url_suffix):
         stored_account = db.execute_query(
             "SELECT id FROM account WHERE url_suffix = %(url)s LIMIT 1",
             {"url": ta.tagged_account_url_suffix},
@@ -1504,7 +1507,7 @@ def get_all_archives_for_canonical_account_relation(canonical_id: int) -> list[A
 
 
 def _resolve_account_canonical_id(id_on_platform: Optional[str], url: Optional[str]) -> Optional[int]:
-    if url:
+    if _is_valid_identifier(url):
         result = db.execute_query(
             "SELECT id FROM account WHERE url_suffix = %(url)s LIMIT 1",
             {"url": url},

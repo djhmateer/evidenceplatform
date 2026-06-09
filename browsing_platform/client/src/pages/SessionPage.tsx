@@ -1,6 +1,6 @@
 import React, {useEffect, useState} from 'react';
 import {useParams} from "react-router";
-import {Typography,} from "@mui/material";
+import {FormControlLabel, Stack, Switch, Tooltip, Typography,} from "@mui/material";
 import {IArchiveSession, IExtractedEntitiesNested} from "../types/entities";
 import {fetchArchivingSession} from "../services/DataFetcher";
 import EntitiesViewer from "../UIComponents/Entities/EntitiesViewer";
@@ -23,6 +23,7 @@ export default function SessionPage() {
     const [loadingData, setLoadingData] = useState(id !== null);
     const [fetchError, setFetchError] = useState<string | null>(null);
     const [sessions, setSessions] = useState<IArchiveSession[] | null>(null);
+    const [showAccountsWithoutPosts, setShowAccountsWithoutPosts] = useState(false);
 
     useEffect(() => {
         if (id === null) return;
@@ -59,6 +60,8 @@ export default function SessionPage() {
         <DataLoadGuard loadingData={loadingData} fetchError={fetchError} data={data}>
             <EntitiesViewer
                 entities={data!}
+                hideAccountsWithoutPosts={!showAccountsWithoutPosts}
+                accountsPageSize={10}
                 viewerConfig={
                     new EntityViewerConfig({
                         media: {
@@ -79,7 +82,17 @@ export default function SessionPage() {
             hideMenu={hideHeader}
             title="Archiving Session Data"
             subtitle={<PageSubtitleLoading data={data}><Typography>Session #{id}</Typography></PageSubtitleLoading>}
-            headerRight={isLoggedIn && id ? <LinkSharing entityType={"archiving_session"} entityId={id}/> : undefined}
+            headerRight={
+                <Stack direction={"row"} alignItems={"center"} gap={2} sx={{flexShrink: 0}}>
+                    <FormControlLabel
+                        control={<Switch size={"small"} checked={showAccountsWithoutPosts}
+                                         onChange={e => setShowAccountsWithoutPosts(e.target.checked)}/>}
+                        label={"Show Accounts With 0 Posts"}
+                        sx={{m: 0, whiteSpace: 'nowrap'}}
+                    />
+                    {isLoggedIn && id ? <LinkSharing entityType={"archiving_session"} entityId={id}/> : null}
+                </Stack>
+            }
         >
             {renderData()}
             <ArchivingSessionsList sessions={sessions} loadingSessions={loadingData}/>

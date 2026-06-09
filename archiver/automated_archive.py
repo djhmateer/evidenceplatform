@@ -30,7 +30,7 @@ from archiver.profile_registration import Profile
 from root_anchor import ROOT_DIR
 from utils.commit_tracker.git_helper import ensure_committed
 from utils.ffmpeg_installer import ensure_ffmpeg_installed
-from utils.misc import get_my_public_ip, get_system_info
+from utils.misc import ensure_vpn_connection, get_my_public_ip, get_system_info
 from utils.par2_installer import ensure_par2_installed
 
 load_dotenv()
@@ -290,7 +290,18 @@ def archive_followers_session(
 
     try:
         with sync_playwright() as p:
-            browser = p.firefox.launch(headless=False)
+            # Force 1 device-pixel per CSS-pixel via the Firefox-native
+            # layout.css.devPixelsPerPx pref. Without this, the operator's OS
+            # display scaling (e.g. Windows 125%) leaks into devicePixelRatio
+            # in headed mode, so the page renders into a larger backing surface
+            # while the built-in video recorder only captures the top-left
+            # device-px region -> cropped video. Playwright's device_scale_factor
+            # context option does NOT fix this: Firefox ignores it
+            # (microsoft/playwright#36628).
+            browser = p.firefox.launch(
+                headless=False,
+                firefox_user_prefs={"layout.css.devPixelsPerPx": "1.0"},
+            )
             browser_build_id = f"{browser.browser_type.name}_{browser.version}"
             metadata.browser_build_id = browser_build_id
             context = browser.new_context(
@@ -345,6 +356,7 @@ def archive_followers_session(
 
 if __name__ == "__main__":
     commit_id, branch = ensure_committed()
+    ensure_vpn_connection()
     ensure_ffmpeg_installed()
     ensure_par2_installed()
     targets = read_targets_from_terminal()

@@ -20,13 +20,26 @@ from extractors.extract_videos import acquire_videos, VideoAcquisitionConfig, Vi
     accumulate_video_segment, reconcile_video_dicts
 from extractors.models import MediaShortcode, HighlightsReelConnection, StoriesFeed, CommentsConnection, ProfileTimeline
 from extractors.models_api_v1 import MediaInfoApiV1, CommentsApiV1, LikersApiV1, FriendshipsApiV1
-from extractors.models_graphql import ProfileTimelineGraphQL, ReelsMediaConnection, FriendsListGraphQL, ClipsUserConnection
+from extractors.models_graphql import ProfileTimelineGraphQL, ReelsMediaConnection, FriendsListGraphQL, ClipsUserConnection, ProfileInfoUserGraphQL
 from extractors.models_har import HarRequest
 from extractors.reconcile_entities import reconcile_accounts, reconcile_posts, reconcile_media
 from extractors.structures_extraction import StructureType
 from extractors.structures_extraction_api_v1 import ApiV1Response, ApiV1Context, extract_data_from_api_v1_entry
-from extractors.structures_extraction_graphql import extract_graphql_from_response, GraphQLResponse
+from extractors.structures_extraction_graphql import extract_graphql_from_response, GraphQLResponse, is_graphql_url
 from extractors.structures_extraction_html import PageResponse, extract_data_from_html_entry
+
+
+def account_url_suffix(username: Optional[str]) -> Optional[str]:
+    """Build an Account/relation url_suffix from a username, or None when absent.
+
+    A missing username must never be formatted into the literal string "None/"
+    (which normalize_url_suffix stores as "None"): distinct usernameless accounts
+    would otherwise collide on that shared sentinel and merge into one canonical.
+    Returning None (NULL) is safe — matching and deduplication never join on a
+    null-like value, so id-only accounts stay distinct via id_on_platform, and
+    reconciliation consistently prefers a real username over a missing one.
+    """
+    return f"{username}/" if username else None
 
 
 class ExtractedHarData(BaseModel):
@@ -58,7 +71,7 @@ def _scan_har_once(har_path: Path) -> tuple[list[StructureType], list[Video], li
 
             # --- Structures (GraphQL, API v1, HTML) ---
             try:
-                if 'graphql/query' in url:
+                if is_graphql_url(url):
                     res_json: Optional[str] = content.get('text')
                     if res_json:
                         req = HarRequest(**entry['request'])
@@ -389,7 +402,33 @@ def graphql_to_entities(structure: GraphQLResponse) -> ExtractedEntitiesFlattene
             extend_flattened_entities(entities, page_posts_to_entities(structure.post_shortcode))
         except Exception as e:
             print(f"[graphql_to_entities] Error processing post_shortcode: {e}")
+    if structure.profile_info:
+        try:
+            extend_flattened_entities(entities, graphql_profile_info_to_entities(structure.profile_info))
+        except Exception as e:
+            print(f"[graphql_to_entities] Error processing profile_info: {e}")
     return entities
+
+
+def graphql_profile_info_to_entities(user: ProfileInfoUserGraphQL) -> ExtractedEntitiesFlattened:
+    """Emit a single Account carrying the profile biography. Sourced from the
+    PolarisProfilePageContentQuery GraphQL response (data.user, served from the
+    /api/graphql endpoint) — the only place the viewed subject's bio appears. The
+    profile-page HTML carries only the logged-in viewer's PolarisViewer bootstrap
+    (the operator, not the subject), so the bio is taken from GraphQL alone."""
+    bio = user.biography or None
+    account = Account(
+        id_on_platform=user.id or user.pk,
+        url_suffix=account_url_suffix(user.username),
+        display_name=user.full_name or None,
+        bio=(bio[:200] if bio else None),  # account.bio is varchar(200) / Field(max_length=200)
+        data=user.model_dump(),
+        platform="instagram",
+    )
+    return ExtractedEntitiesFlattened(
+        accounts=[account], posts=[], media=[], comments=[], likes=[],
+        account_relations=[], tagged_accounts=[]
+    )
 
 
 def graphql_reels_media_to_entities(structure: ReelsMediaConnection) -> ExtractedEntitiesFlattened:
@@ -402,19 +441,27 @@ def graphql_reels_media_to_entities(structure: ReelsMediaConnection) -> Extracte
         highlight_id = highlight.id.split(":")[-1]
         user = highlight.user
         username = user.username
-        user_id = user.id or user.user_id
-        is_24_hours_story = username if highlight_id == user_id else highlight_id
+        user_id = user.pk or user.id or user.user_id
+        # 24h stories and highlights both arrive via the reels_media endpoint with a
+        # near-identical shape. A 24h story is the user's own reel (reel_type
+        # "user_reel"; node id == user pk), whereas a highlight is nested in a
+        # collection node (reel_type "highlight_reel"; node id "highlight:{coll_pk}").
+        is_highlight = highlight.reel_type == "highlight_reel" or highlight_id != user_id
         for item in highlight.items:
             account = Account(
                 id_on_platform=highlight.user.id,
-                url_suffix=f"{highlight.user.username}/",
+                url_suffix=account_url_suffix(highlight.user.username),
                 display_name=None,
                 bio=None,
                 data=highlight.user.model_dump(),
                 platform="instagram"
             )
             extracted_accounts.append(account)
-            url_suffix = f"stories/{username}/{item.pk or item.id}/" if is_24_hours_story else f"s/{highlight_id}/?story_media_id={item.pk or item.id}"
+            url_suffix = (
+                f"s/{highlight_id}/?story_media_id={item.pk or item.id}"
+                if is_highlight
+                else f"stories/{username}/{item.pk or item.id}/"
+            )
             post = Post(
                 id_on_platform=item.pk or item.id,
                 url_suffix=url_suffix,
@@ -459,7 +506,7 @@ def graphql_reels_media_to_entities(structure: ReelsMediaConnection) -> Extracte
                         for tag in media_item.usertags.in_field:
                             extracted_tagged_accounts.append(TaggedAccount(
                                 tagged_account_id_on_platform=tag.user.id,
-                                tagged_account_url_suffix=f"{tag.user.username}/",
+                                tagged_account_url_suffix=account_url_suffix(tag.user.username),
                                 context_post_url_suffix=post.url_suffix,
                                 context_media_url_suffix=media_url,
                                 context_post_id_on_platform=post.id_on_platform,
@@ -469,7 +516,7 @@ def graphql_reels_media_to_entities(structure: ReelsMediaConnection) -> Extracte
                             ))
                             extracted_accounts.append(Account(
                                 id_on_platform=tag.user.id,
-                                url_suffix=f"{tag.user.username}/",
+                                url_suffix=account_url_suffix(tag.user.username),
                                 display_name=tag.user.full_name,
                                 bio=None,
                                 data=tag.user.model_dump(),
@@ -496,7 +543,7 @@ def graphql_profile_timeline_to_entities(structure: ProfileTimelineGraphQL) -> E
             continue
         account = Account(
             id_on_platform=item.user.id,
-            url_suffix=f"{item.user.username}/",
+            url_suffix=account_url_suffix(item.user.username),
             display_name=None,
             bio=None,
             data=item.user.model_dump(),
@@ -520,7 +567,7 @@ def graphql_profile_timeline_to_entities(structure: ProfileTimelineGraphQL) -> E
             for tag in item.usertags.in_field:
                 extracted_tagged_accounts.append(TaggedAccount(
                     tagged_account_id_on_platform=tag.user.id,
-                    tagged_account_url_suffix=f"{tag.user.username}/",
+                    tagged_account_url_suffix=account_url_suffix(tag.user.username),
                     context_post_url_suffix=post.url_suffix,
                     context_media_url_suffix=None,
                     context_post_id_on_platform=post.id_on_platform,
@@ -530,7 +577,7 @@ def graphql_profile_timeline_to_entities(structure: ProfileTimelineGraphQL) -> E
                 ))
                 extracted_accounts.append(Account(
                     id_on_platform=tag.user.id,
-                    url_suffix=f"{tag.user.username}/",
+                    url_suffix=account_url_suffix(tag.user.username),
                     display_name=tag.user.full_name,
                     bio=None,
                     data=tag.user.model_dump(),
@@ -569,7 +616,7 @@ def graphql_profile_timeline_to_entities(structure: ProfileTimelineGraphQL) -> E
                     for tag in media_item.usertags.in_field:
                         extracted_tagged_accounts.append(TaggedAccount(
                             tagged_account_id_on_platform=tag.user.id,
-                            tagged_account_url_suffix=f"{tag.user.username}/",
+                            tagged_account_url_suffix=account_url_suffix(tag.user.username),
                             context_post_url_suffix=post.url_suffix,
                             context_media_url_suffix=media_url_suffix,
                             context_post_id_on_platform=post.id_on_platform,
@@ -579,7 +626,7 @@ def graphql_profile_timeline_to_entities(structure: ProfileTimelineGraphQL) -> E
                         ))
                         extracted_accounts.append(Account(
                             id_on_platform=tag.user.id,
-                            url_suffix=f"{tag.user.username}/",
+                            url_suffix=account_url_suffix(tag.user.username),
                             display_name=tag.user.full_name,
                             bio=None,
                             data=tag.user.model_dump(),
@@ -606,7 +653,7 @@ def graphql_comments_to_entities(structure: CommentsConnection, context: Any) ->
         if c.user:
             extracted_accounts.append(Account(
                 id_on_platform=c.user.id,
-                url_suffix=f"{c.user.username}/",
+                url_suffix=account_url_suffix(c.user.username),
                 display_name=None,
                 bio=None,
                 data=c.user.model_dump(),
@@ -618,7 +665,7 @@ def graphql_comments_to_entities(structure: CommentsConnection, context: Any) ->
             post_id_on_platform=post_pk,
             post_url_suffix=post_url,
             account_id_on_platform=c.user.pk if c.user else None,
-            account_url_suffix=f"{c.user.username}/" if c.user else None,
+            account_url_suffix=account_url_suffix(c.user.username) if c.user else None,
             text=c.text,
             parent_comment_id_on_platform=c.parent_comment_id,
             publication_date=datetime.fromtimestamp(c.created_at) if c.created_at else None,
@@ -646,7 +693,7 @@ def graphql_likes_to_entities(structure: LikersApiV1, context: Any) -> Extracted
             post_id_on_platform=post_pk,
             post_url_suffix=post_url,
             account_id_on_platform=u.pk,
-            account_url_suffix=f"{u.username}/",
+            account_url_suffix=account_url_suffix(u.username),
             data=u.model_dump(),
             platform="instagram"
         )
@@ -674,7 +721,7 @@ def graphql_suggested_accounts_to_entities(structure: FriendsListGraphQL, contex
     extracted_accounts: list[Account] = []
     for u in structure.users:
         account = Account(
-            url_suffix=f"{u.username}/",
+            url_suffix=account_url_suffix(u.username),
             display_name=u.full_name,
             bio=None,
             id_on_platform=u.id,
@@ -685,7 +732,7 @@ def graphql_suggested_accounts_to_entities(structure: FriendsListGraphQL, contex
         relation = AccountRelation(
             follower_account_id_on_platform=target_account_id,
             followed_account_id_on_platform=u.id,
-            followed_account_url_suffix=f"{u.username}/",
+            followed_account_url_suffix=account_url_suffix(u.username),
             relation_type='suggested',
             data=None,
             platform="instagram"
@@ -708,7 +755,7 @@ def graphql_clips_to_entities(structure: ClipsUserConnection) -> ExtractedEntiti
         item = edge.node.media
         account = Account(
             id_on_platform=item.user.id,
-            url_suffix=f"{item.user.username}/",
+            url_suffix=account_url_suffix(item.user.username),
             display_name=None,
             bio=None,
             data=item.user.model_dump(),
@@ -761,7 +808,7 @@ def graphql_clips_to_entities(structure: ClipsUserConnection) -> ExtractedEntiti
                     for tag in media_item.usertags.in_field:
                         extracted_tagged_accounts.append(TaggedAccount(
                             tagged_account_id_on_platform=tag.user.id,
-                            tagged_account_url_suffix=f"{tag.user.username}/",
+                            tagged_account_url_suffix=account_url_suffix(tag.user.username),
                             context_post_url_suffix=post.url_suffix,
                             context_media_url_suffix=carousel_url_suffix,
                             context_post_id_on_platform=post.id_on_platform,
@@ -771,7 +818,7 @@ def graphql_clips_to_entities(structure: ClipsUserConnection) -> ExtractedEntiti
                         ))
                         extracted_accounts.append(Account(
                             id_on_platform=tag.user.id,
-                            url_suffix=f"{tag.user.username}/",
+                            url_suffix=account_url_suffix(tag.user.username),
                             display_name=tag.user.full_name,
                             bio=None,
                             data=tag.user.model_dump(),
@@ -809,10 +856,10 @@ def api_v1_media_info_to_entities(media_info: MediaInfoApiV1) -> ExtractedEntiti
     extracted_media: list[Media] = []
     for item in media_info.items:
         _username = item.user.username or item.owner.username
+        _user_id = item.user.id or item.owner.id
         account = Account(
-            id_on_platform=item.user.id or item.owner.id,
-            url_suffix=f"{_username}/" if _username else (
-                f"id:{item.user.id or item.owner.id}" if (item.user.id or item.owner.id) else None),
+            id_on_platform=_user_id,
+            url_suffix=account_url_suffix(_username),
             display_name=item.user.full_name or item.owner.full_name,
             bio=None,
             data=item.user.model_dump(),
@@ -847,7 +894,7 @@ def api_v1_media_info_to_entities(media_info: MediaInfoApiV1) -> ExtractedEntiti
             for tag in item.usertags.in_field:
                 extracted_tagged_accounts.append(TaggedAccount(
                     tagged_account_id_on_platform=tag.user.id,
-                    tagged_account_url_suffix=f"{tag.user.username}/",
+                    tagged_account_url_suffix=account_url_suffix(tag.user.username),
                     context_post_url_suffix=post.url_suffix,
                     context_media_url_suffix=None,
                     context_post_id_on_platform=post.id_on_platform,
@@ -859,7 +906,7 @@ def api_v1_media_info_to_entities(media_info: MediaInfoApiV1) -> ExtractedEntiti
                 ))
                 extracted_accounts.append(Account(
                     id_on_platform=tag.user.id,
-                    url_suffix=f"{tag.user.username}/",
+                    url_suffix=account_url_suffix(tag.user.username),
                     display_name=tag.user.full_name,
                     bio=None,
                     data=tag.user.model_dump(),
@@ -885,7 +932,7 @@ def api_v1_media_info_to_entities(media_info: MediaInfoApiV1) -> ExtractedEntiti
                     for tag in media_item.usertags.in_field:
                         extracted_tagged_accounts.append(TaggedAccount(
                             tagged_account_id_on_platform=tag.user.id,
-                            tagged_account_url_suffix=f"{tag.user.username}/",
+                            tagged_account_url_suffix=account_url_suffix(tag.user.username),
                             context_post_url_suffix=post.url_suffix,
                             context_media_url_suffix=carousel_url_suffix,
                             context_post_id_on_platform=post.id_on_platform,
@@ -897,7 +944,7 @@ def api_v1_media_info_to_entities(media_info: MediaInfoApiV1) -> ExtractedEntiti
                         ))
                         extracted_accounts.append(Account(
                             id_on_platform=tag.user.id,
-                            url_suffix=f"{tag.user.username}/",
+                            url_suffix=account_url_suffix(tag.user.username),
                             display_name=tag.user.full_name,
                             bio=None,
                             data=tag.user.model_dump(),
@@ -922,7 +969,7 @@ def api_v1_comments_to_entities(comments_insta: CommentsApiV1, context: ApiV1Con
         if c.user:
             accounts.append(Account(
                 id_on_platform=c.user.id,
-                url_suffix=f"{c.user.username}/",
+                url_suffix=account_url_suffix(c.user.username),
                 display_name=None,
                 bio=None,
                 data=c.user.model_dump(),
@@ -934,7 +981,7 @@ def api_v1_comments_to_entities(comments_insta: CommentsApiV1, context: ApiV1Con
             post_id_on_platform=post_pk,
             post_url_suffix=post_url,
             account_id_on_platform=c.user.id if c.user else None,
-            account_url_suffix=f"{c.user.username}/" if c.user else None,
+            account_url_suffix=account_url_suffix(c.user.username) if c.user else None,
             text=c.text,
             publication_date=datetime.fromtimestamp(c.created_at) if c.created_at else None,
             data=c.model_dump(),
@@ -956,7 +1003,7 @@ def api_v1_likes_to_entities(structure: LikersApiV1, context: ApiV1Context) -> E
     for u in structure.users:
         accounts.append(Account(
             id_on_platform=u.pk,
-            url_suffix=f"{u.username}/",
+            url_suffix=account_url_suffix(u.username),
             display_name=u.full_name,
             bio=None,
             data=u.model_dump(),
@@ -967,7 +1014,7 @@ def api_v1_likes_to_entities(structure: LikersApiV1, context: ApiV1Context) -> E
             post_id_on_platform=post_pk,
             post_url_suffix=post_url,
             account_id_on_platform=u.pk,
-            account_url_suffix=f"{u.username}/",
+            account_url_suffix=account_url_suffix(u.username),
             data=u.model_dump(),
             platform="instagram"
         ))
@@ -987,7 +1034,7 @@ def api_v1_friendships_to_entities(structure: FriendshipsApiV1, context: ApiV1Co
     accounts: list[Account] = []
     for u in structure.users:
         account = Account(
-            url_suffix=f"{u.username}/",
+            url_suffix=account_url_suffix(u.username),
             display_name=u.full_name,
             bio=None,
             id_on_platform=u.id,
@@ -998,7 +1045,7 @@ def api_v1_friendships_to_entities(structure: FriendshipsApiV1, context: ApiV1Co
         if follow_direction == "followers":
             relation = AccountRelation(
                 follower_account_id_on_platform=u.id,
-                follower_account_url_suffix=f"{u.username}/",
+                follower_account_url_suffix=account_url_suffix(u.username),
                 followed_account_id_on_platform=target_account_id,
                 relation_type='follower',
                 data=None,
@@ -1008,7 +1055,7 @@ def api_v1_friendships_to_entities(structure: FriendshipsApiV1, context: ApiV1Co
             relation = AccountRelation(
                 follower_account_id_on_platform=target_account_id,
                 followed_account_id_on_platform=u.id,
-                followed_account_url_suffix=f"{u.username}/",
+                followed_account_url_suffix=account_url_suffix(u.username),
                 relation_type='follower',
                 data=None,
                 platform="instagram"
@@ -1051,7 +1098,7 @@ def page_posts_to_entities(structure: MediaShortcode) -> ExtractedEntitiesFlatte
         _user_id = (item.user.id if item.user else None) or (item.owner.id if item.owner else None)
         account: Account = Account(
             id_on_platform=_user_id,
-            url_suffix=f"{_username}/" if _username else (f"id:{_user_id}" if _user_id else None),
+            url_suffix=account_url_suffix(_username),
             display_name=_fullname,
             bio=None,
             data=item.user.model_dump() if item.user else None,
@@ -1089,7 +1136,7 @@ def page_posts_to_entities(structure: MediaShortcode) -> ExtractedEntitiesFlatte
             for tag in item.usertags.in_field:
                 extracted_tagged_accounts.append(TaggedAccount(
                     tagged_account_id_on_platform=tag.user.id,
-                    tagged_account_url_suffix=f"{tag.user.username}/",
+                    tagged_account_url_suffix=account_url_suffix(tag.user.username),
                     context_post_url_suffix=post.url_suffix,
                     context_media_url_suffix=first_media.url_suffix,
                     context_post_id_on_platform=post.id_on_platform,
@@ -1101,7 +1148,7 @@ def page_posts_to_entities(structure: MediaShortcode) -> ExtractedEntitiesFlatte
                 ))
                 extracted_accounts.append(Account(
                     id_on_platform=tag.user.id,
-                    url_suffix=f"{tag.user.username}/",
+                    url_suffix=account_url_suffix(tag.user.username),
                     display_name=tag.user.full_name,
                     bio=None,
                     data=tag.user.model_dump(),
@@ -1129,7 +1176,7 @@ def page_posts_to_entities(structure: MediaShortcode) -> ExtractedEntitiesFlatte
                     for tag in media_item.usertags.in_field:
                         extracted_tagged_accounts.append(TaggedAccount(
                             tagged_account_id_on_platform=tag.user.id,
-                            tagged_account_url_suffix=f"{tag.user.username}/",
+                            tagged_account_url_suffix=account_url_suffix(tag.user.username),
                             context_post_url_suffix=post.url_suffix,
                             context_media_url_suffix=url_suffix,
                             context_post_id_on_platform=post.id_on_platform,
@@ -1141,7 +1188,7 @@ def page_posts_to_entities(structure: MediaShortcode) -> ExtractedEntitiesFlatte
                         ))
                         extracted_accounts.append(Account(
                             id_on_platform=tag.user.id,
-                            url_suffix=f"{tag.user.username}/",
+                            url_suffix=account_url_suffix(tag.user.username),
                             display_name=tag.user.full_name,
                             bio=None,
                             data=tag.user.model_dump(),
@@ -1167,7 +1214,7 @@ def page_timelines_to_entities(structure: ProfileTimeline) -> ExtractedEntitiesF
             continue
         account = Account(
             id_on_platform=item.user.id,
-            url_suffix=f"{item.user.username}/" if item.user.username else None,
+            url_suffix=account_url_suffix(item.user.username),
             display_name=None,
             bio=None,
             data=item.user.model_dump(),
@@ -1221,7 +1268,7 @@ def page_timelines_to_entities(structure: ProfileTimeline) -> ExtractedEntitiesF
                     for tag in media_item.usertags.in_field:
                         extracted_tagged_accounts.append(TaggedAccount(
                             tagged_account_id_on_platform=tag.user.id,
-                            tagged_account_url_suffix=f"{tag.user.username}/",
+                            tagged_account_url_suffix=account_url_suffix(tag.user.username),
                             context_post_url_suffix=post.url_suffix,
                             context_media_url_suffix=carousel_url_suffix,
                             context_post_id_on_platform=post.id_on_platform,
@@ -1233,7 +1280,7 @@ def page_timelines_to_entities(structure: ProfileTimeline) -> ExtractedEntitiesF
                         ))
                         extracted_accounts.append(Account(
                             id_on_platform=tag.user.id,
-                            url_suffix=f"{tag.user.username}/",
+                            url_suffix=account_url_suffix(tag.user.username),
                             display_name=tag.user.full_name,
                             bio=None,
                             data=tag.user.model_dump(),
@@ -1263,7 +1310,7 @@ def page_highlight_reels_to_entities(structure: HighlightsReelConnection) -> Ext
         highlight_id = highlight.id.split(":")[-1]
         account = Account(
             id_on_platform=highlight.user.id,
-            url_suffix=f"{highlight.user.username}/",
+            url_suffix=account_url_suffix(highlight.user.username),
             display_name=None,
             bio=None,
             data=highlight.user.model_dump(),
@@ -1299,7 +1346,7 @@ def page_highlight_reels_to_entities(structure: HighlightsReelConnection) -> Ext
                 for sticker in reel.story_bloks_stickers:
                     extracted_tagged_accounts.append(TaggedAccount(
                         tagged_account_id_on_platform=None,
-                        tagged_account_url_suffix=f"{sticker.bloks_sticker.sticker_data.ig_mention.username}/",
+                        tagged_account_url_suffix=account_url_suffix(sticker.bloks_sticker.sticker_data.ig_mention.username),
                         context_post_url_suffix=post.url_suffix,
                         context_media_url_suffix=None,
                         context_post_id_on_platform=post.id_on_platform,
@@ -1309,7 +1356,7 @@ def page_highlight_reels_to_entities(structure: HighlightsReelConnection) -> Ext
                     ))
                     extracted_accounts.append(Account(
                         id_on_platform=None,
-                        url_suffix=f"{sticker.bloks_sticker.sticker_data.ig_mention.username}/",
+                        url_suffix=account_url_suffix(sticker.bloks_sticker.sticker_data.ig_mention.username),
                         display_name=sticker.bloks_sticker.sticker_data.ig_mention.full_name,
                         bio=None,
                         data=sticker.bloks_sticker.sticker_data.ig_mention.model_dump(),
@@ -1335,7 +1382,7 @@ def page_highlight_reels_to_entities(structure: HighlightsReelConnection) -> Ext
                         for tag in media_item.usertags.in_field:
                             extracted_tagged_accounts.append(TaggedAccount(
                                 tagged_account_id_on_platform=tag.user.id,
-                                tagged_account_url_suffix=f"{tag.user.username}/",
+                                tagged_account_url_suffix=account_url_suffix(tag.user.username),
                                 context_post_url_suffix=post.url_suffix,
                                 context_media_url_suffix=media_url_suffix,
                                 context_post_id_on_platform=post.id_on_platform,
@@ -1347,7 +1394,7 @@ def page_highlight_reels_to_entities(structure: HighlightsReelConnection) -> Ext
                             ))
                             extracted_accounts.append(Account(
                                 id_on_platform=tag.user.id,
-                                url_suffix=f"{tag.user.username}/",
+                                url_suffix=account_url_suffix(tag.user.username),
                                 display_name=tag.user.full_name,
                                 bio=None,
                                 data=tag.user.model_dump(),
@@ -1375,7 +1422,7 @@ def page_stories_to_entities(structure: StoriesFeed) -> ExtractedEntitiesFlatten
         )
     account = Account(
         id_on_platform=reels_media.user.id,
-        url_suffix=f"{reels_media.user.username}/",
+        url_suffix=account_url_suffix(reels_media.user.username),
         display_name=None,
         bio=None,
         data=reels_media.user.model_dump(),
@@ -1398,7 +1445,7 @@ def page_stories_to_entities(structure: StoriesFeed) -> ExtractedEntitiesFlatten
             for sticker in item.story_bloks_stickers:
                 extracted_tagged_accounts.append(TaggedAccount(
                     tagged_account_id_on_platform=None,
-                    tagged_account_url_suffix=f"{sticker.bloks_sticker.sticker_data.ig_mention.username}/",
+                    tagged_account_url_suffix=account_url_suffix(sticker.bloks_sticker.sticker_data.ig_mention.username),
                     context_post_url_suffix=post.url_suffix,
                     context_media_url_suffix=None,
                     context_post_id_on_platform=post.id_on_platform,
@@ -1408,7 +1455,7 @@ def page_stories_to_entities(structure: StoriesFeed) -> ExtractedEntitiesFlatten
                 ))
                 extracted_accounts.append(Account(
                     id_on_platform=None,
-                    url_suffix=f"{sticker.bloks_sticker.sticker_data.ig_mention.username}/",
+                    url_suffix=account_url_suffix(sticker.bloks_sticker.sticker_data.ig_mention.username),
                     display_name=sticker.bloks_sticker.sticker_data.ig_mention.full_name,
                     bio=None,
                     data=sticker.bloks_sticker.sticker_data.ig_mention.model_dump(),
@@ -1447,7 +1494,7 @@ def page_stories_to_entities(structure: StoriesFeed) -> ExtractedEntitiesFlatten
                     for tag in media_item.usertags.in_field:
                         extracted_tagged_accounts.append(TaggedAccount(
                             tagged_account_id_on_platform=tag.user.id,
-                            tagged_account_url_suffix=f"{tag.user.username}/",
+                            tagged_account_url_suffix=account_url_suffix(tag.user.username),
                             context_post_url_suffix=post.url_suffix,
                             context_media_url_suffix=media_url_suffix,
                             context_post_id_on_platform=post.id_on_platform,
@@ -1459,7 +1506,7 @@ def page_stories_to_entities(structure: StoriesFeed) -> ExtractedEntitiesFlatten
                         ))
                         extracted_accounts.append(Account(
                             id_on_platform=tag.user.id,
-                            url_suffix=f"{tag.user.username}/",
+                            url_suffix=account_url_suffix(tag.user.username),
                             display_name=tag.user.full_name,
                             bio=None,
                             data=tag.user.model_dump(),
@@ -1487,7 +1534,7 @@ def page_comments_to_entities(comments_structure: CommentsConnection,
             c = e.node
             account = Account(
                 id_on_platform=c.user.pk if c.user else None,
-                url_suffix=f"{c.user.username}/" if c.user else None,
+                url_suffix=account_url_suffix(c.user.username) if c.user else None,
                 data=c.user.model_dump() if c.user else None,
                 display_name=None, bio=None,
                 platform="instagram"

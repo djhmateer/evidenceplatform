@@ -3,7 +3,18 @@ from pydantic import BaseModel
 from extractors.models import StoriesFeed, CommentsConnection, MediaShortcode
 from extractors.models_api_v1 import LikersApiV1
 from extractors.models_graphql import ProfileTimelineGraphQL, FriendsListGraphQL, ReelsMediaConnection, \
-    ClipsUserConnection
+    ClipsUserConnection, ProfileInfoUserGraphQL
+
+
+def is_graphql_url(url: str) -> bool:
+    """True if a request URL is an Instagram GraphQL endpoint whose response
+    `extract_graphql_from_response` can parse. Instagram serves these from two
+    paths: the web `…/graphql/query` endpoint and the `…/api/graphql` endpoint
+    (which carries, among others, the PolarisProfilePageContentQuery `data.user`
+    profile/biography response and the `xdt_api__v1__discover__chaining` friends
+    list). Both must be scanned; matching only `graphql/query` silently drops
+    everything that arrives via `/api/graphql`."""
+    return "graphql/query" in url or "/api/graphql" in url
 
 
 class GraphQLResponse(BaseModel):
@@ -16,6 +27,7 @@ class GraphQLResponse(BaseModel):
     comments_connection: Optional[CommentsConnection] = None
     likes: Optional[LikersApiV1] = None
     post_shortcode: Optional[MediaShortcode] = None
+    profile_info: Optional[ProfileInfoUserGraphQL] = None
 
 
 def extract_graphql_from_response(
@@ -91,6 +103,16 @@ def extract_graphql_from_response(
     except Exception as e:
         print(f"[graphql_response] Error parsing post_shortcode: {e}")
 
+    try:
+        # PolarisProfilePageContentQuery returns the viewed profile (with its
+        # biography) directly under data.user. Detect on the biography key so
+        # only profile-content responses match, not other data.user shapes.
+        user_obj = data.get("user")
+        if isinstance(user_obj, dict) and "biography" in user_obj:
+            res.profile_info = ProfileInfoUserGraphQL(**user_obj)
+    except Exception as e:
+        print(f"[graphql_response] Error parsing profile_info: {e}")
+
     return res if any([
         res.profile_timeline,
         res.friends_list,
@@ -100,4 +122,5 @@ def extract_graphql_from_response(
         res.comments_connection,
         res.likes,
         res.post_shortcode,
+        res.profile_info,
     ]) else None

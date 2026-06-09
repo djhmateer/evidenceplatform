@@ -29,6 +29,20 @@ class ProfileTimelineGraphQL(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
 
+class ProfileInfoUserGraphQL(BaseModel):
+    """The viewed-profile user returned by PolarisProfilePageContentQuery
+    (`data.user`) and the profile-page HTML `PolarisViewer` bootstrap
+    (`data`). Carries the account `biography`. extra="allow" so every other
+    profile field survives into the Account.data JSON column."""
+    pk: Optional[str] = None
+    id: Optional[str] = None
+    username: Optional[str] = None
+    full_name: Optional[str] = None
+    biography: Optional[str] = None
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+
 class FriendUser(BaseModel):
     friendship_status: Optional[Any] = None
     full_name: Optional[str] = None

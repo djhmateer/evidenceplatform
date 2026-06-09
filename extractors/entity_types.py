@@ -98,6 +98,19 @@ def parse_search_url(s: str) -> Optional[ParsedSearchUrl]:
     return None
 
 
+def collapse_null_like_suffix(v: Optional[str]) -> Optional[str]:
+    """Collapse the legacy 'None' sentinel and empty strings to a real None.
+
+    Extraction no longer produces these (see account_url_suffix in
+    structures_to_entities); this exists to neutralise the artifacts a past bug
+    left in the DB, so that reading such a row back collapses it to None and
+    re-extraction can overwrite it with the correct value.
+    """
+    if not isinstance(v, str):
+        return v
+    return None if v == 'None' else (v or None)
+
+
 class EntityBase(BaseModel):
     id: Optional[int] = None
     created_at: Optional[datetime] = None
@@ -132,7 +145,7 @@ class Account(EntityBase):
     def normalize_url_suffix(cls, v, _):
         if isinstance(v, str):
             v = v.strip().split('?')[0].rstrip('/')
-        return v
+        return collapse_null_like_suffix(v)
 
     @field_validator('data', mode='before')
     def parse_data(cls, v, _):
@@ -200,7 +213,7 @@ class Post(EntityBase):
                 v = cleaned
             else:
                 v = v.split('?')[0].rstrip('/')
-        return v
+        return collapse_null_like_suffix(v)
 
     @model_validator(mode='after')
     def derive_id_on_platform_from_url(self):
@@ -260,7 +273,7 @@ class Media(EntityBase):
     def normalize_url_suffix(cls, v, _):
         if isinstance(v, str):
             v = v.strip().split('?')[0].rstrip('/')
-        return v
+        return collapse_null_like_suffix(v)
 
     @field_validator('data', mode='before')
     def parse_data(cls, v, _):
@@ -319,7 +332,7 @@ class Comment(EntityBase):
     def normalize_url_suffix(cls, v, _):
         if isinstance(v, str):
             v = v.strip().split('?')[0].rstrip('/')
-        return v
+        return collapse_null_like_suffix(v)
 
     @field_validator('data', mode='before')
     def parse_data(cls, v, _):
@@ -369,7 +382,7 @@ class Like(EntityBase):
     def normalize_url_suffix(cls, v, _):
         if isinstance(v, str):
             v = v.strip().split('?')[0].rstrip('/')
-        return v
+        return collapse_null_like_suffix(v)
 
     @field_validator('data', mode='before')
     def parse_data(cls, v, _):
@@ -426,7 +439,7 @@ class AccountRelation(EntityBase):
     def normalize_url_suffix(cls, v, _):
         if isinstance(v, str):
             v = v.strip().split('?')[0].rstrip('/')
-        return v
+        return collapse_null_like_suffix(v)
 
     @field_validator('data', mode='before')
     def parse_data(cls, v, _):
@@ -496,7 +509,7 @@ class TaggedAccount(EntityBase):
     def normalize_url_suffix(cls, v, _):
         if isinstance(v, str):
             v = v.strip().split('?')[0].rstrip('/')
-        return v
+        return collapse_null_like_suffix(v)
 
     @field_validator('data', mode='before')
     def parse_data(cls, v, _):

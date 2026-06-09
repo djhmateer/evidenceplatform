@@ -12,7 +12,7 @@ dependencies = [
     "numpy==2.4.4",
     "opentimestamps-client==0.7.2",
     "pillow>=12.1.1",
-    "playwright==1.58.0",
+    "playwright==1.60.0",
     "psutil==6.1.1",
     "pyasn1>=0.6.2",
     "pyautogui==0.9.54",
