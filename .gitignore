@@ -48,3 +48,4 @@ archive_from_instagram.bat
 archivesOLD/*
 package_data.bat
 archiver/utils/par2/par2.exe
+package_archives.bat
