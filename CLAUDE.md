@@ -28,6 +28,8 @@ Supporting modules in `archiver/`:
 
 The extraction logic lives in `extractors/` — HAR files contain raw Instagram API responses (GraphQL and API v1 formats), parsed by `structures_extraction*.py` files into Pydantic models (`models.py`, `models_graphql.py`, `models_api_v1.py`), then inserted into MySQL via `db_loaders/db_intake.py`.
 
+Entity identity rules: canonical matching is id_on_platform-first (the pk is immutable; usernames change hands), `account.id_on_platform` is UNIQUE, and `media.id_on_platform` is NOT unique (it is the parent post's pk, shared by carousel siblings — media identity is `url_suffix`). Accounts observed only by username get a pk-less stub row; when a session later proves a stub and a pk-holder are the same profile, `db_loaders/account_merge.py` soft-merges the stub into the holder. Merged rows are never deleted (internal ids are cited externally): they become inert tombstones with `merged_into_account_id` set, served via redirect by the account routes, and every merge is logged in `account_merge_log`.
+
 ### Browsing Platform (`browsing_platform/`)
 
 **Backend** (`browsing_platform/server/server.py`): FastAPI app on port 4444. Uses a routes/services pattern — `routes/` handles HTTP and `services/` contains business logic. File access is secured with ChaCha20-Poly1305 encrypted tokens (`FILE_TOKEN_SECRET`). Authentication uses `BROWSING_PLATFORM_DEV=1` bypass for local dev.

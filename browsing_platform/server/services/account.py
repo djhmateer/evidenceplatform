@@ -60,8 +60,11 @@ def get_account_by_platform_id(platform_id: str, include_data: bool = True) -> O
 
 def get_account_by_url(url: str, include_data: bool = True) -> Optional[Account]:
     cols = _ACCOUNT_COLS if include_data else _ACCOUNT_COLS_NO_DATA
+    # Several live rows can share a handle (a pk-less stub beside the pk-holder,
+    # or a recycled username) — prefer the pk-holder, then the oldest row.
     row = db.execute_query(
-        f"SELECT {cols} FROM account WHERE url_suffix = %(url)s LIMIT 1",
+        f"""SELECT {cols} FROM account WHERE url_suffix = %(url)s
+            ORDER BY (id_on_platform IS NULL), id LIMIT 1""",
         {"url": url},
         return_type="single_row"
     )

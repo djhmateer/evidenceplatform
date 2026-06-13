@@ -5,6 +5,7 @@ from typing import Optional, TypeVar, Generic, Callable, Any
 
 from pydantic import BaseModel, ConfigDict
 
+from db_loaders.account_merge import auto_merge_shadowed_stubs, is_valid_identifier as _is_valid_identifier
 from extractors.entity_types import EntityBase, ExtractedEntitiesFlattened, Account, Post, Media, Comment, Like, TaggedAccount, AccountRelation
 from extractors.reconcile_entities import reconcile_accounts, reconcile_posts, reconcile_media, reconcile_comments, reconcile_likes, reconcile_tagged_accounts, reconcile_account_relations, synthesize_from_archives, reconcile_primitives
 from root_anchor import ROOT_ARCHIVES
@@ -42,19 +43,29 @@ class EntityProcessingConfig(BaseModel, Generic[EntityType]):
 # Generic batch query helpers
 # ---------------------------------------------------------------------------
 
-def _is_valid_identifier(value) -> bool:
-    """Return False for null-like values that must not be used as entity-match keys.
+def _pk_conflict(candidate, id_on_platform) -> bool:
+    """True when a url-matched candidate holds a DIFFERENT non-null pk: the
+    handle changed hands on the platform, so treating the rows as the same
+    entity would either conflate two distinct profiles or copy this entity's
+    pk onto a stale row, duplicating a pk another canonical already holds."""
+    candidate_pk = getattr(candidate, 'id_on_platform', None)
+    return bool(id_on_platform and candidate_pk and candidate_pk != id_on_platform)
 
-    Null-like means: Python None, empty string, or the literal string 'None' /
-    'None/' which is the f-string artifact of formatting a Python None value.
-    Matching multiple distinct entities on a shared null-like identifier would
-    incorrectly merge them into the same canonical.
+
+def batch_get_canonicals_url_and_id(entities: list, table: str, entity_class: type, id_priority: bool = True) -> list:
+    """One batch lookup for entity types matched by id_on_platform OR url_suffix.
+
+    id_priority=True (account/post/comment): id_on_platform is the platform's
+    immutable key, so an id match always wins over a url match. A url match
+    landing on a canonical that holds a DIFFERENT non-null id_on_platform is
+    rejected (-> None -> new canonical): the handle changed hands, and merging
+    would either conflate two distinct entities or write this entity's pk onto
+    a stale row, duplicating a pk that another canonical already holds.
+
+    id_priority=False (media): id_on_platform is the parent post's pk, shared
+    by every carousel sibling — url_suffix (the filename) is the real identity
+    and the id is only a last-resort fallback.
     """
-    return bool(value) and str(value).rstrip('/') != 'None'
-
-
-def batch_get_canonicals_url_and_id(entities: list, table: str, entity_class: type) -> list:
-    """One batch lookup for entity types matched by url OR id_on_platform."""
     urls = list({e.url_suffix for e in entities if _is_valid_identifier(getattr(e, 'url_suffix', None))})
     ids = list({e.id_on_platform for e in entities if getattr(e, 'id_on_platform', None)})
 
@@ -73,10 +84,64 @@ def batch_get_canonicals_url_and_id(entities: list, table: str, entity_class: ty
             seen.add(row['id'])
             canonicals.append(entity_class(**row))
 
-    by_url = {c.url_suffix: c for c in canonicals if _is_valid_identifier(getattr(c, 'url_suffix', None))}
-    by_id = {c.id_on_platform: c for c in canonicals if getattr(c, 'id_on_platform', None)}
-    return [by_url.get(getattr(e, 'url_suffix', None)) or by_id.get(getattr(e, 'id_on_platform', None))
-            for e in entities]
+    # Lowest canonical id wins when the DB still holds rows sharing an
+    # identifier, so matching is deterministic rather than fetch-order dependent.
+    by_url: dict = {}
+    by_id: dict = {}
+    for c in sorted(canonicals, key=lambda c: c.id):
+        if _is_valid_identifier(getattr(c, 'url_suffix', None)):
+            by_url.setdefault(c.url_suffix, c)
+        if getattr(c, 'id_on_platform', None):
+            by_id.setdefault(c.id_on_platform, c)
+
+    def match(e):
+        entity_id_op = getattr(e, 'id_on_platform', None)
+        id_match = by_id.get(entity_id_op) if entity_id_op else None
+        url_match = by_url.get(getattr(e, 'url_suffix', None))
+        if not id_priority:
+            return url_match or id_match
+        if id_match is not None:
+            return id_match
+        if url_match is not None and _pk_conflict(url_match, entity_id_op):
+            return None
+        return url_match
+
+    return [match(e) for e in entities]
+
+
+def get_canonical_by_identifiers(table: str, entity_class: type, id_on_platform, url_suffix,
+                                 id_priority: bool = True):
+    """Single-row counterpart of batch_get_canonicals_url_and_id — same priority
+    and recycled-handle semantics, for the per-row FK-resolution fallbacks."""
+    def by_id():
+        if not id_on_platform:
+            return None
+        entry = db.execute_query(
+            f"SELECT * FROM `{table}` WHERE id_on_platform = %(id_on_platform)s ORDER BY id LIMIT 1",
+            {"id_on_platform": id_on_platform},
+            return_type="single_row"
+        )
+        return entity_class(**entry) if entry else None
+
+    def by_url():
+        if not _is_valid_identifier(url_suffix):
+            return None
+        entry = db.execute_query(
+            f"SELECT * FROM `{table}` WHERE url_suffix = %(url_suffix)s ORDER BY id LIMIT 1",
+            {"url_suffix": url_suffix},
+            return_type="single_row"
+        )
+        return entity_class(**entry) if entry else None
+
+    if not id_priority:
+        return by_url() or by_id()
+    match = by_id()
+    if match is not None:
+        return match
+    candidate = by_url()
+    if candidate is not None and _pk_conflict(candidate, id_on_platform):
+        return None
+    return candidate
 
 
 def batch_get_canonicals_id_only(entities: list, table: str, entity_class: type) -> list:
@@ -127,7 +192,8 @@ def batch_get_all_archives(canonical_ids: list, archive_table: str, entity_class
 # ---------------------------------------------------------------------------
 
 def batch_resolve_account_fks_by_url_and_id(entities: list, url_attr: str, id_attr: str, id_field: str) -> None:
-    """Batch-resolve account FK (sets `id_field` on each entity) using url and id_on_platform lookups."""
+    """Batch-resolve account FK (sets `id_field` on each entity); the immutable
+    id_on_platform takes priority over the mutable username."""
     urls = list({getattr(e, url_attr) for e in entities if getattr(e, id_field, None) is None and _is_valid_identifier(getattr(e, url_attr, None))})
     ids_op = list({getattr(e, id_attr) for e in entities if getattr(e, id_field, None) is None and getattr(e, id_attr, None)})
     by_url, by_id_op = {}, {}
@@ -141,12 +207,35 @@ def batch_resolve_account_fks_by_url_and_id(entities: list, url_attr: str, id_at
         by_id_op = {r['id_on_platform']: r['id'] for r in rows}
     for e in entities:
         if getattr(e, id_field, None) is None:
-            resolved = by_url.get(getattr(e, url_attr, None)) or by_id_op.get(getattr(e, id_attr, None))
+            resolved = by_id_op.get(getattr(e, id_attr, None)) or by_url.get(getattr(e, url_attr, None))
             setattr(e, id_field, resolved)
 
 
+def _resolve_account_canonical_id(id_on_platform: Optional[str], url: Optional[str]) -> Optional[int]:
+    """Per-row account FK resolution; the immutable id_on_platform takes
+    priority over the mutable username."""
+    if id_on_platform:
+        result = db.execute_query(
+            "SELECT id FROM account WHERE id_on_platform = %(id_on_platform)s LIMIT 1",
+            {"id_on_platform": id_on_platform},
+            return_type="single_row"
+        )
+        if result:
+            return result["id"]
+    if _is_valid_identifier(url):
+        result = db.execute_query(
+            "SELECT id FROM account WHERE url_suffix = %(url)s LIMIT 1",
+            {"url": url},
+            return_type="single_row"
+        )
+        if result:
+            return result["id"]
+    return None
+
+
 def batch_resolve_post_fks(entities: list, url_attr: str, id_attr: str, id_field: str) -> None:
-    """Batch-resolve post FK (sets `id_field` on each entity) using url and id_on_platform lookups."""
+    """Batch-resolve post FK (sets `id_field` on each entity); the immutable
+    id_on_platform takes priority over the url (story urls embed the username)."""
     urls = list({getattr(e, url_attr) for e in entities if getattr(e, id_field, None) is None and getattr(e, url_attr, None)})
     ids_op = list({getattr(e, id_attr) for e in entities if getattr(e, id_field, None) is None and getattr(e, id_attr, None)})
     by_url, by_id_op = {}, {}
@@ -160,7 +249,7 @@ def batch_resolve_post_fks(entities: list, url_attr: str, id_attr: str, id_field
         by_id_op = {r['id_on_platform']: r['id'] for r in rows}
     for e in entities:
         if getattr(e, id_field, None) is None:
-            resolved = by_url.get(getattr(e, url_attr, None)) or by_id_op.get(getattr(e, id_attr, None))
+            resolved = by_id_op.get(getattr(e, id_attr, None)) or by_url.get(getattr(e, url_attr, None))
             setattr(e, id_field, resolved)
 
 
@@ -327,6 +416,12 @@ def incorporate_structures_into_db(
                 continue
 
             logger.debug(f"Processing {len(entities)} {entity_config.key}")
+
+            # An account observed with BOTH (pk, username) proves that a pk-less
+            # stub holding that username is the same profile — fold the stub
+            # into the pk-holder (soft merge) before canonical matching runs.
+            if entity_config.key == "accounts":
+                auto_merge_shadowed_stubs(entities, archive_session_id)
 
             # --- Phase 1: Batch-fetch existing canonicals (1-2 queries instead of N) ---
             if entity_config.batch_get_canonicals:
@@ -528,18 +623,7 @@ def preserve_canonical_identifiers(synthesized: EntityBase, existing_canonical: 
 # ---------------------------------------------------------------------------
 
 def get_canonical_account(account: Account) -> Optional[Account]:
-    # Never match on a null-like url_suffix ('None', 'None/', '') — distinct
-    # usernameless accounts would collide on the shared sentinel and merge.
-    url_suffix = account.url_suffix if _is_valid_identifier(account.url_suffix) else None
-    entry = db.execute_query(
-        """SELECT * FROM account
-           WHERE (url_suffix = %(url_suffix)s AND url_suffix IS NOT NULL)
-              OR (id_on_platform = %(id_on_platform)s AND id_on_platform IS NOT NULL)
-           LIMIT 1""",
-        {"url_suffix": url_suffix, "id_on_platform": account.id_on_platform},
-        return_type="single_row"
-    )
-    return Account(**entry) if entry else None
+    return get_canonical_by_identifiers("account", Account, account.id_on_platform, account.url_suffix)
 
 
 def get_archive_record_account(canonical_id: int, archive_session_id: int) -> Optional[Account]:
@@ -665,15 +749,7 @@ def store_account_archive(
 # ---------------------------------------------------------------------------
 
 def get_canonical_post(post: Post) -> Optional[Post]:
-    entry = db.execute_query(
-        """SELECT * FROM post
-           WHERE (url_suffix = %(url_suffix)s AND url_suffix IS NOT NULL)
-              OR (id_on_platform = %(id_on_platform)s AND id_on_platform IS NOT NULL)
-           LIMIT 1""",
-        {"url_suffix": post.url_suffix, "id_on_platform": post.id_on_platform},
-        return_type="single_row"
-    )
-    return Post(**entry) if entry else None
+    return get_canonical_by_identifiers("post", Post, post.id_on_platform, post.url_suffix)
 
 
 def get_archive_record_post(canonical_id: int, archive_session_id: int) -> Optional[Post]:
@@ -817,15 +893,10 @@ def preprocess_media(media: Media, _: Optional[int], archive_location: Optional[
 
 
 def get_canonical_media(media: Media) -> Optional[Media]:
-    entry = db.execute_query(
-        """SELECT * FROM media
-           WHERE (url_suffix = %(url_suffix)s AND url_suffix IS NOT NULL)
-              OR (id_on_platform = %(id_on_platform)s AND id_on_platform IS NOT NULL)
-           LIMIT 1""",
-        {"url_suffix": media.url_suffix, "id_on_platform": media.id_on_platform},
-        return_type="single_row"
-    )
-    return Media(**entry) if entry else None
+    # url-priority: media.id_on_platform is the parent post's pk, shared by
+    # carousel siblings — the filename (url_suffix) is the real identity.
+    return get_canonical_by_identifiers("media", Media, media.id_on_platform, media.url_suffix,
+                                        id_priority=False)
 
 
 def get_archive_record_media(canonical_id: int, archive_session_id: int) -> Optional[Media]:
@@ -970,15 +1041,7 @@ def store_media_archive(
 # ---------------------------------------------------------------------------
 
 def get_canonical_comment(comment: Comment) -> Optional[Comment]:
-    entry = db.execute_query(
-        """SELECT * FROM comment
-           WHERE (id_on_platform = %(id_on_platform)s AND id_on_platform IS NOT NULL)
-              OR (url_suffix = %(url_suffix)s AND url_suffix IS NOT NULL)
-           LIMIT 1""",
-        {"id_on_platform": comment.id_on_platform, "url_suffix": comment.url_suffix},
-        return_type="single_row"
-    )
-    return Comment(**entry) if entry else None
+    return get_canonical_by_identifiers("comment", Comment, comment.id_on_platform, comment.url_suffix)
 
 
 def get_archive_record_comment(canonical_id: int, archive_session_id: int) -> Optional[Comment]:
@@ -1008,22 +1071,8 @@ def store_comment(comment: Comment, existing_comment: Optional[Comment], _: Opti
             raise ValueError(f"Cannot store comment {comment.id_on_platform!r}: post not found "
                              f"(url={comment.post_url_suffix!r}, id_on_platform={comment.post_id_on_platform!r})")
         comment.post_id = stored_post.id
-    if comment.account_id is None and _is_valid_identifier(comment.account_url_suffix):
-        stored_account = db.execute_query(
-            "SELECT id FROM account WHERE url_suffix = %(url_suffix)s LIMIT 1",
-            {"url_suffix": comment.account_url_suffix},
-            return_type="single_row"
-        )
-        if stored_account:
-            comment.account_id = stored_account["id"]
-    if comment.account_id is None and comment.account_id_on_platform:
-        stored_account = db.execute_query(
-            "SELECT id FROM account WHERE id_on_platform = %(id_on_platform)s LIMIT 1",
-            {"id_on_platform": comment.account_id_on_platform},
-            return_type="single_row"
-        )
-        if stored_account:
-            comment.account_id = stored_account["id"]
+    if comment.account_id is None:
+        comment.account_id = _resolve_account_canonical_id(comment.account_id_on_platform, comment.account_url_suffix)
     if existing_comment is not None:
         db.execute_query(
             """UPDATE comment
@@ -1188,22 +1237,8 @@ def store_post_like(like: Like, existing_like: Optional[Like], _: Optional[Path]
             raise ValueError(f"Cannot store like {like.id_on_platform!r}: post not found "
                              f"(url={like.post_url_suffix!r}, id_on_platform={like.post_id_on_platform!r})")
         like.post_id = stored_post.id
-    if like.account_id is None and _is_valid_identifier(like.account_url_suffix):
-        stored_account = db.execute_query(
-            "SELECT id FROM account WHERE url_suffix = %(url)s LIMIT 1",
-            {"url": like.account_url_suffix},
-            return_type="single_row"
-        )
-        if stored_account:
-            like.account_id = stored_account["id"]
-    if like.account_id is None and like.account_id_on_platform:
-        stored_account = db.execute_query(
-            "SELECT id FROM account WHERE id_on_platform = %(id_on_platform)s LIMIT 1",
-            {"id_on_platform": like.account_id_on_platform},
-            return_type="single_row"
-        )
-        if stored_account:
-            like.account_id = stored_account["id"]
+    if like.account_id is None:
+        like.account_id = _resolve_account_canonical_id(like.account_id_on_platform, like.account_url_suffix)
     if existing_like is not None:
         db.execute_query(
             """UPDATE post_like
@@ -1329,22 +1364,8 @@ def get_all_archives_for_canonical_tagged_account(canonical_id: int) -> list[Tag
 
 
 def store_tagged_account(ta: TaggedAccount, existing_ta: Optional[TaggedAccount], _: Optional[Path]) -> int:
-    if ta.tagged_account_id is None and _is_valid_identifier(ta.tagged_account_url_suffix):
-        stored_account = db.execute_query(
-            "SELECT id FROM account WHERE url_suffix = %(url)s LIMIT 1",
-            {"url": ta.tagged_account_url_suffix},
-            return_type="single_row"
-        )
-        if stored_account:
-            ta.tagged_account_id = stored_account["id"]
-    if ta.tagged_account_id is None and ta.tagged_account_id_on_platform:
-        stored_account = db.execute_query(
-            "SELECT id FROM account WHERE id_on_platform = %(id_on_platform)s LIMIT 1",
-            {"id_on_platform": ta.tagged_account_id_on_platform},
-            return_type="single_row"
-        )
-        if stored_account:
-            ta.tagged_account_id = stored_account["id"]
+    if ta.tagged_account_id is None:
+        ta.tagged_account_id = _resolve_account_canonical_id(ta.tagged_account_id_on_platform, ta.tagged_account_url_suffix)
     if ta.post_id is None and (ta.context_post_url_suffix or ta.context_post_id_on_platform):
         stored_post = get_canonical_post(Post(url_suffix=ta.context_post_url_suffix, id_on_platform=ta.context_post_id_on_platform, platform=ta.platform))
         if stored_post:
@@ -1506,26 +1527,6 @@ def get_all_archives_for_canonical_account_relation(canonical_id: int) -> list[A
     return [AccountRelation(**entry) for entry in (entries or [])]
 
 
-def _resolve_account_canonical_id(id_on_platform: Optional[str], url: Optional[str]) -> Optional[int]:
-    if _is_valid_identifier(url):
-        result = db.execute_query(
-            "SELECT id FROM account WHERE url_suffix = %(url)s LIMIT 1",
-            {"url": url},
-            return_type="single_row"
-        )
-        if result:
-            return result["id"]
-    if id_on_platform:
-        result = db.execute_query(
-            "SELECT id FROM account WHERE id_on_platform = %(id_on_platform)s LIMIT 1",
-            {"id_on_platform": id_on_platform},
-            return_type="single_row"
-        )
-        if result:
-            return result["id"]
-    return None
-
-
 def store_account_relation(ar: AccountRelation, existing_ar: Optional[AccountRelation], _: Optional[Path]) -> int:
     if ar.follower_account_id is None:
         ar.follower_account_id = _resolve_account_canonical_id(
@@ -1683,7 +1684,9 @@ entity_types: list[EntityProcessingConfig] = [
         store_entity_archive=store_media_archive,
         merge=reconcile_media,
         raw_entity_preprocessing=preprocess_media,
-        batch_get_canonicals=lambda es: batch_get_canonicals_url_and_id(es, "media", Media),
+        # url-priority: media.id_on_platform is the parent post's pk, shared by
+        # carousel siblings — id-priority would collapse siblings onto one row.
+        batch_get_canonicals=lambda es: batch_get_canonicals_url_and_id(es, "media", Media, id_priority=False),
         batch_get_archive_records=lambda ids, sid: batch_get_archive_records(ids, "media_archive", sid, Media),
         batch_get_all_archives=lambda ids: batch_get_all_archives(ids, "media_archive", Media),
         batch_store_new_entities=lambda es, loc: batch_store_new_media(es, loc),

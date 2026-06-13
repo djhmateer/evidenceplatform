@@ -284,7 +284,9 @@ def search_accounts(query: ISearchQuery, search_results_transform: SearchResultT
         "limit": query.page_size,
         "offset": (query.page_number - 1) * query.page_size,
     }
-    where_clauses = []
+    # Tombstones of merged accounts (see db_loaders/account_merge.py) are
+    # empty husks that only exist to keep cited URLs resolving — never listed.
+    where_clauses = ["account.merged_into_account_id IS NULL"]
     has_fulltext = False
     if query.search_term:
         parsed_url = parse_search_url(query.search_term)
@@ -332,7 +334,7 @@ def search_accounts(query: ISearchQuery, search_results_transform: SearchResultT
         f"""SELECT account.id, account.url_suffix, account.platform, account.display_name, account.bio
            FROM account
            {tag_filter_join}
-           {'WHERE ' + ' AND '.join(where_clauses) if len(where_clauses) else ''}
+           WHERE {' AND '.join(f'({c})' for c in where_clauses)}
            ORDER BY {order_by}
            LIMIT %(limit)s OFFSET %(offset)s""",
         query_args,
@@ -402,7 +404,7 @@ def search_posts(query: ISearchQuery, search_results_transform: SearchResultTran
     if query.tag_ids:
         tag_filter_join, tag_filter_args = build_tag_filter_join("post", query.tag_ids, query.tag_filter_mode or "any", query.tag_scopes)
         query_args.update(tag_filter_args)
-    inner_where = ('WHERE ' + ' AND '.join(where_clauses)) if where_clauses else ''
+    inner_where = ('WHERE ' + ' AND '.join(f'({c})' for c in where_clauses)) if where_clauses else ''
     order_by = (
         "MATCH(`url_suffix`, `caption`) AGAINST (%(search_term)s IN BOOLEAN MODE) DESC"
         if has_fulltext else "publication_date DESC"
@@ -483,7 +485,7 @@ def search_media(query: ISearchQuery, search_results_transform: SearchResultTran
     if query.tag_ids:
         tag_filter_join, tag_filter_args = build_tag_filter_join("media", query.tag_ids, query.tag_filter_mode or "any", query.tag_scopes)
         query_args.update(tag_filter_args)
-    inner_where = ' AND '.join(where_clauses)
+    inner_where = ' AND '.join(f'({c})' for c in where_clauses)
     order_by = resolve_order_by("media", query.sort_by, query.sort_order, "media.id DESC")
     rows = db.execute_query(  # nosec B608 - inner_where, order_by and tag_filter_join built from safe clauses only
         f"""SELECT m.id, m.thumbnail_path, m.local_url, m.aspect_ratio, m.media_type, m.publication_date,

@@ -74,6 +74,11 @@ def transaction_batch():
         cnx.close()
 
 
+def in_transaction_batch() -> bool:
+    """True when the calling thread is inside a transaction_batch() context."""
+    return getattr(_local, "connection", None) is not None
+
+
 def batch_insert(table: str, columns: list, rows: list) -> list:
     """
     Perform a single multi-row INSERT and return the list of auto-increment IDs.
