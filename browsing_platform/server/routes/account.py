@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from browsing_platform.server.routes.fast_api_request_processor import extract_entities_transform_config
 from browsing_platform.server.services.account import account_exists, get_account_data_by_id, \
     get_account_by_platform_id, get_account_by_url
+from browsing_platform.server.services.account_attribution import get_attribution_report
 from browsing_platform.server.services.enriched_entities import get_enriched_account_by_id, \
     get_account_relations_by_account_id, get_interactions_by_account_id, AccountInteractions, \
     get_account_auxiliary_counts, AccountAuxiliaryCounts, AccountRelationsResponse, \
@@ -94,6 +95,15 @@ async def get_account_auxiliary_counts_route(item_id: int = Depends(_resolved_ac
     if not account_exists(item_id):
         raise HTTPException(status_code=404, detail="Account Not Found")
     return get_account_auxiliary_counts(item_id)
+
+
+@router.get("/{item_id}/attribution-report/", dependencies=[Depends(_auth_account_view)])
+@router.get("/{item_id}/attribution-report", dependencies=[Depends(_auth_account_view)])
+async def get_account_attribution_report(item_id: int = Depends(_resolved_account_id)) -> dict:
+    report = get_attribution_report(item_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Account Not Found")
+    return report
 
 
 @router.get("/{item_id}/", dependencies=[Depends(_auth_account_view)])
