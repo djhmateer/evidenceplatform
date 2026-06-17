@@ -686,10 +686,19 @@ def extract_videos_from_structures(structures: list[StructureType]) -> list[Vide
     pk_video_versions_dict: dict[str, tuple[list[VideoVersion], Optional[str], str]] = dict()
 
     def _store(pk: Optional[str], versions: Optional[list[VideoVersion]], src: object) -> None:
-        if not pk or not versions:
+        if not pk:
             return
         manifest: Optional[str] = getattr(src, 'video_dash_manifest', None)
-        pk_video_versions_dict[pk] = (versions, manifest, pk)
+        effective_versions = versions
+        if not effective_versions and manifest and isinstance(manifest, str):
+            for raw in re.findall(r'<BaseURL>([^<]+)</BaseURL>', manifest):
+                url = html.unescape(raw).strip()
+                if url:
+                    effective_versions = [VideoVersion(url=url)]
+                    break
+        if not effective_versions:
+            return
+        pk_video_versions_dict[pk] = (effective_versions, manifest, pk)
 
     for s in structures:
         if isinstance(s, GraphQLResponse):

@@ -1,5 +1,7 @@
 import base64
+import html as _html
 import json
+import re as _re
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +29,33 @@ from extractors.structures_extraction import StructureType
 from extractors.structures_extraction_api_v1 import ApiV1Response, ApiV1Context, extract_data_from_api_v1_entry
 from extractors.structures_extraction_graphql import extract_graphql_from_response, GraphQLResponse, is_graphql_url
 from extractors.structures_extraction_html import PageResponse, extract_data_from_html_entry
+
+
+def _is_video(item) -> bool:
+    if getattr(item, 'media_type', None) == 2:
+        return True
+    if getattr(item, 'video_versions', None):
+        return True
+    manifest = getattr(item, 'video_dash_manifest', None)
+    if manifest and isinstance(manifest, str) and manifest.strip():
+        return True
+    return False
+
+
+def _asset_url_from_item(item) -> Optional[str]:
+    video_versions = getattr(item, 'video_versions', None)
+    if video_versions:
+        return video_versions[0].url
+    manifest = getattr(item, 'video_dash_manifest', None)
+    if manifest and isinstance(manifest, str):
+        for raw in _re.findall(r'<BaseURL>([^<]+)</BaseURL>', manifest):
+            url = _html.unescape(raw).strip()
+            if url:
+                return url
+    image_versions2 = getattr(item, 'image_versions2', None)
+    if image_versions2 and image_versions2.candidates:
+        return image_versions2.candidates[0].url
+    return None
 
 
 def account_url_suffix(username: Optional[str]) -> Optional[str]:
@@ -473,24 +502,20 @@ def graphql_reels_media_to_entities(structure: ReelsMediaConnection) -> Extracte
                 platform="instagram"
             )
             extracted_posts.append(post)
-            item_asset_url = (item.video_versions[0].url if item.video_versions
-                              else (item.image_versions2.candidates[0].url
-                                    if item.image_versions2 and item.image_versions2.candidates else None))
+            item_asset_url = _asset_url_from_item(item)
             extracted_media.append(Media(
                 id_on_platform=item.id,
                 url_suffix=canonical_cdn_url(item_asset_url) if item_asset_url else None,
                 post_id_on_platform=post.id_on_platform,
                 post_url_suffix=post.url_suffix,
                 local_url=None,
-                media_type="video" if item.video_versions else "image",
+                media_type="video" if _is_video(item) else "image",
                 data=item.model_dump(exclude={'carousel_media'}),
                 platform="instagram"
             ))
             if item.carousel_media:
                 for media_item in item.carousel_media:
-                    carousel_asset_url = (media_item.video_versions[0].url if media_item.video_versions
-                                          else (media_item.image_versions2.candidates[0].url
-                                                if media_item.image_versions2 and media_item.image_versions2.candidates else None))
+                    carousel_asset_url = _asset_url_from_item(media_item)
                     media_url = canonical_cdn_url(carousel_asset_url) if carousel_asset_url else None
                     extracted_media.append(Media(
                         id_on_platform=media_item.id,
@@ -498,7 +523,7 @@ def graphql_reels_media_to_entities(structure: ReelsMediaConnection) -> Extracte
                         post_id_on_platform=post.id_on_platform,
                         post_url_suffix=post.url_suffix,
                         local_url=None,
-                        media_type="image" if media_item.media_type == 1 else "video",
+                        media_type="video" if _is_video(media_item) else "image",
                         data=media_item.model_dump(),
                         platform="instagram"
                     ))
@@ -583,24 +608,20 @@ def graphql_profile_timeline_to_entities(structure: ProfileTimelineGraphQL) -> E
                     data=tag.user.model_dump(),
                     platform="instagram"
                 ))
-        asset_url = item.video_versions[0].url if item.video_versions else \
-            (item.image_versions2.candidates[
-                 0].url if item.image_versions2 and item.image_versions2.candidates else None)
+        asset_url = _asset_url_from_item(item)
         extracted_media.append(Media(
             id_on_platform=item.id,
             url_suffix=canonical_cdn_url(asset_url) if asset_url else None,
             post_id_on_platform=post.id_on_platform,
             post_url_suffix=post.url_suffix,
             local_url=None,
-            media_type="video" if item.video_versions else "image",
+            media_type="video" if _is_video(item) else "image",
             data=item.model_dump(exclude={'carousel_media'}),
             platform="instagram"
         ))
         if item.carousel_media:
             for media_item in item.carousel_media:
-                media_url = media_item.video_versions[0].url if media_item.video_versions else \
-                    (media_item.image_versions2.candidates[
-                         0].url if media_item.image_versions2 and media_item.image_versions2.candidates else None)
+                media_url = _asset_url_from_item(media_item)
                 media_url_suffix = canonical_cdn_url(media_url) if media_url else None
                 extracted_media.append(Media(
                     id_on_platform=media_item.id,
@@ -608,7 +629,7 @@ def graphql_profile_timeline_to_entities(structure: ProfileTimelineGraphQL) -> E
                     post_id_on_platform=post.id_on_platform,
                     post_url_suffix=post.url_suffix,
                     local_url=None,
-                    media_type="image" if media_item.media_type == 1 else "video",
+                    media_type="video" if _is_video(media_item) else "image",
                     data=media_item.model_dump(),
                     platform="instagram"
                 ))
@@ -775,24 +796,20 @@ def graphql_clips_to_entities(structure: ClipsUserConnection) -> ExtractedEntiti
             platform="instagram"
         )
         extracted_posts.append(post)
-        asset_url = (item.video_versions[0].url if item.video_versions
-                     else (item.image_versions2.candidates[0].url
-                           if item.image_versions2 and item.image_versions2.candidates else None))
+        asset_url = _asset_url_from_item(item)
         extracted_media.append(Media(
             id_on_platform=item.id,
             url_suffix=canonical_cdn_url(asset_url) if asset_url else None,
             post_id_on_platform=post.id_on_platform,
             post_url_suffix=post.url_suffix,
             local_url=None,
-            media_type="video" if item.video_versions else "image",
+            media_type="video" if _is_video(item) else "image",
             data=item.model_dump(exclude={'carousel_media'}),
             platform="instagram"
         ))
         if item.carousel_media:
             for media_item in item.carousel_media:
-                carousel_url = (media_item.video_versions[0].url if media_item.video_versions
-                                else (media_item.image_versions2.candidates[0].url
-                                      if media_item.image_versions2 and media_item.image_versions2.candidates else None))
+                carousel_url = _asset_url_from_item(media_item)
                 carousel_url_suffix = canonical_cdn_url(carousel_url) if carousel_url else None
                 extracted_media.append(Media(
                     id_on_platform=media_item.id,
@@ -800,7 +817,7 @@ def graphql_clips_to_entities(structure: ClipsUserConnection) -> ExtractedEntiti
                     post_id_on_platform=post.id_on_platform,
                     post_url_suffix=post.url_suffix,
                     local_url=None,
-                    media_type="image" if media_item.media_type == 1 else "video",
+                    media_type="video" if _is_video(media_item) else "image",
                     data=media_item.model_dump(),
                     platform="instagram"
                 ))
@@ -877,16 +894,14 @@ def api_v1_media_info_to_entities(media_info: MediaInfoApiV1) -> ExtractedEntiti
             platform="instagram"
         )
         extracted_posts.append(post)
-        media_asset_url = (item.video_versions[0].url if item.video_versions
-                           else (item.image_versions2.candidates[0].url
-                                 if item.image_versions2 and item.image_versions2.candidates else None))
+        media_asset_url = _asset_url_from_item(item)
         extracted_media.append(Media(
             id_on_platform=item.id,
             url_suffix=canonical_cdn_url(media_asset_url) if media_asset_url else None,
             post_id_on_platform=post.id_on_platform,
             post_url_suffix=post.url_suffix,
             local_url=None,
-            media_type="video" if item.video_versions else "image",
+            media_type="video" if _is_video(item) else "image",
             data=item.model_dump(),
             platform="instagram"
         ))
@@ -914,9 +929,7 @@ def api_v1_media_info_to_entities(media_info: MediaInfoApiV1) -> ExtractedEntiti
                 ))
         if item.carousel_media:
             for media_item in item.carousel_media:
-                carousel_asset_url = (media_item.video_versions[0].url if media_item.video_versions
-                                      else (media_item.image_versions2.candidates[0].url
-                                            if media_item.image_versions2 and media_item.image_versions2.candidates else None))
+                carousel_asset_url = _asset_url_from_item(media_item)
                 carousel_url_suffix = canonical_cdn_url(carousel_asset_url) if carousel_asset_url else None
                 extracted_media.append(Media(
                     id_on_platform=media_item.id,
@@ -924,7 +937,7 @@ def api_v1_media_info_to_entities(media_info: MediaInfoApiV1) -> ExtractedEntiti
                     post_id_on_platform=post.id_on_platform,
                     post_url_suffix=post.url_suffix,
                     local_url=None,
-                    media_type="image" if media_item.media_type == 1 else "video",
+                    media_type="video" if _is_video(media_item) else "image",
                     data=media_item.model_dump(),
                     platform="instagram"
                 ))
@@ -1118,16 +1131,14 @@ def page_posts_to_entities(structure: MediaShortcode) -> ExtractedEntitiesFlatte
             platform="instagram"
         )
         extracted_posts.append(post)
-        asset_url = (item.video_versions[0].url if item.video_versions
-                     else (item.image_versions2.candidates[0].url
-                           if item.image_versions2 and item.image_versions2.candidates else None))
+        asset_url = _asset_url_from_item(item)
         first_media = Media(
             id_on_platform=item.id,
             url_suffix=canonical_cdn_url(asset_url) if asset_url else None,
             post_id_on_platform=post.id_on_platform,
             post_url_suffix=post.url_suffix,
             local_url=None,
-            media_type="video" if item.video_versions else "image",
+            media_type="video" if _is_video(item) else "image",
             data=item.model_dump(exclude={'carousel_media'}),
             platform="instagram"
         )
@@ -1156,11 +1167,7 @@ def page_posts_to_entities(structure: MediaShortcode) -> ExtractedEntitiesFlatte
                 ))
         if item.carousel_media:
             for media_item in item.carousel_media:
-                url = (media_item.video_versions[0].url if media_item.video_versions else (
-                    media_item.image_versions2.candidates[0].url
-                    if media_item.image_versions2 and media_item.image_versions2.candidates
-                    else None
-                ))
+                url = _asset_url_from_item(media_item)
                 url_suffix = canonical_cdn_url(url) if url else None
                 extracted_media.append(Media(
                     id_on_platform=media_item.id,
@@ -1168,7 +1175,7 @@ def page_posts_to_entities(structure: MediaShortcode) -> ExtractedEntitiesFlatte
                     post_id_on_platform=post.id_on_platform,
                     post_url_suffix=post.url_suffix,
                     local_url=None,
-                    media_type="image" if media_item.media_type == 1 else "video",
+                    media_type="video" if _is_video(media_item) else "image",
                     data=media_item.model_dump(),
                     platform="instagram"
                 ))
@@ -1235,24 +1242,20 @@ def page_timelines_to_entities(structure: ProfileTimeline) -> ExtractedEntitiesF
             platform="instagram"
         )
         extracted_posts.append(post)
-        asset_url = (item.video_versions[0].url if item.video_versions
-                     else (item.image_versions2.candidates[0].url
-                           if item.image_versions2 and item.image_versions2.candidates else None))
+        asset_url = _asset_url_from_item(item)
         extracted_media.append(Media(
             id_on_platform=item.id,
             url_suffix=canonical_cdn_url(asset_url) if asset_url else None,
             post_id_on_platform=post.id_on_platform,
             post_url_suffix=post.url_suffix,
             local_url=None,
-            media_type="video" if item.video_versions else "image",
+            media_type="video" if _is_video(item) else "image",
             data=item_data,
             platform="instagram"
         ))
         if item.carousel_media:
             for media_item in item.carousel_media:
-                carousel_url = (media_item.video_versions[0].url if media_item.video_versions
-                                else (media_item.image_versions2.candidates[0].url
-                                      if media_item.image_versions2 and media_item.image_versions2.candidates else None))
+                carousel_url = _asset_url_from_item(media_item)
                 carousel_url_suffix = canonical_cdn_url(carousel_url) if carousel_url else None
                 extracted_media.append(Media(
                     id_on_platform=media_item.id,
@@ -1260,7 +1263,7 @@ def page_timelines_to_entities(structure: ProfileTimeline) -> ExtractedEntitiesF
                     post_id_on_platform=post.id_on_platform,
                     post_url_suffix=post.url_suffix,
                     local_url=None,
-                    media_type="image" if media_item.media_type == 1 else "video",
+                    media_type="video" if _is_video(media_item) else "image",
                     data=media_item.model_dump(),
                     platform="instagram"
                 ))
@@ -1329,16 +1332,14 @@ def page_highlight_reels_to_entities(structure: HighlightsReelConnection) -> Ext
                 platform="instagram"
             )
             extracted_posts.append(post)
-            reel_asset_url = (reel.video_versions[0].url if reel.video_versions
-                              else (reel.image_versions2.candidates[0].url
-                                    if reel.image_versions2 and reel.image_versions2.candidates else None))
+            reel_asset_url = _asset_url_from_item(reel)
             extracted_media.append(Media(
                 id_on_platform=reel.id,
                 url_suffix=canonical_cdn_url(reel_asset_url) if reel_asset_url else None,
                 post_id_on_platform=post.id_on_platform,
                 post_url_suffix=post.url_suffix,
                 local_url=None,
-                media_type="video" if reel.video_versions else "image",
+                media_type="video" if _is_video(reel) else "image",
                 data=reel.model_dump(),
                 platform="instagram"
             ))
@@ -1364,9 +1365,7 @@ def page_highlight_reels_to_entities(structure: HighlightsReelConnection) -> Ext
                     ))
             if reel.carousel_media:
                 for media_item in reel.carousel_media:
-                    carousel_asset_url = (media_item.video_versions[0].url if media_item.video_versions
-                                          else (media_item.image_versions2.candidates[0].url
-                                                if media_item.image_versions2 and media_item.image_versions2.candidates else None))
+                    carousel_asset_url = _asset_url_from_item(media_item)
                     media_url_suffix = canonical_cdn_url(carousel_asset_url) if carousel_asset_url else None
                     extracted_media.append(Media(
                         id_on_platform=media_item.id,
@@ -1374,7 +1373,7 @@ def page_highlight_reels_to_entities(structure: HighlightsReelConnection) -> Ext
                         post_id_on_platform=post.id_on_platform,
                         post_url_suffix=post.url_suffix,
                         local_url=None,
-                        media_type="image" if media_item.media_type == 1 else "video",
+                        media_type="video" if _is_video(media_item) else "image",
                         data=media_item.model_dump(),
                         platform="instagram"
                     ))
@@ -1461,24 +1460,20 @@ def page_stories_to_entities(structure: StoriesFeed) -> ExtractedEntitiesFlatten
                     data=sticker.bloks_sticker.sticker_data.ig_mention.model_dump(),
                     platform="instagram"
                 ))
-        story_asset_url = (item.video_versions[0].url if item.video_versions
-                           else (item.image_versions2.candidates[0].url
-                                 if item.image_versions2 and item.image_versions2.candidates else None))
+        story_asset_url = _asset_url_from_item(item)
         extracted_media.append(Media(
             id_on_platform=item.id,
             url_suffix=canonical_cdn_url(story_asset_url) if story_asset_url else None,
             post_id_on_platform=post.id_on_platform,
             post_url_suffix=post.url_suffix,
             local_url=None,
-            media_type="video" if item.video_versions else "image",
+            media_type="video" if _is_video(item) else "image",
             data=item.model_dump(),
             platform="instagram"
         ))
         if item.carousel_media:
             for media_item in item.carousel_media:
-                carousel_asset_url = (media_item.video_versions[0].url if media_item.video_versions
-                                      else (media_item.image_versions2.candidates[0].url
-                                            if media_item.image_versions2 and media_item.image_versions2.candidates else None))
+                carousel_asset_url = _asset_url_from_item(media_item)
                 media_url_suffix = canonical_cdn_url(carousel_asset_url) if carousel_asset_url else None
                 extracted_media.append(Media(
                     id_on_platform=media_item.id,
@@ -1486,7 +1481,7 @@ def page_stories_to_entities(structure: StoriesFeed) -> ExtractedEntitiesFlatten
                     post_id_on_platform=post.id_on_platform,
                     post_url_suffix=post.url_suffix,
                     local_url=None,
-                    media_type="image" if media_item.media_type == 1 else "video",
+                    media_type="video" if _is_video(media_item) else "image",
                     data=media_item.model_dump(),
                     platform="instagram"
                 ))
