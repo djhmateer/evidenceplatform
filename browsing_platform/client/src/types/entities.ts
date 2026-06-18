@@ -238,3 +238,29 @@ export interface IPostAuxiliaryCounts {
     comments_count: number;
     likes_count: number;
 }
+
+export interface IAttributionAffiliationCounts {
+    total: number;
+    uncertain: number;
+}
+
+export interface IAttributionContester {
+    id: number;
+    id_on_platform?: string;
+    url_suffix?: string;
+    display_name?: string;
+}
+
+export interface IAttributionReport {
+    account_id: number;
+    url_suffix?: string;
+    contested: boolean;
+    contesting_accounts: IAttributionContester[];
+    uncertain_affiliations: {
+        posts_authored?: IAttributionAffiliationCounts;
+        comments?: IAttributionAffiliationCounts;
+        post_likes?: IAttributionAffiliationCounts;
+        tagged_in_posts?: IAttributionAffiliationCounts;
+    };
+    note?: string;
+}

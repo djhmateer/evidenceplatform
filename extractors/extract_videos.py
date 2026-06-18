@@ -48,6 +48,7 @@ class Video(BaseModel):
     xpv_asset_id: str
     fetched_tracks: Optional[dict[str, MediaTrack]]
     full_asset: Optional[str] = None
+    cover_photo_url: Optional[str] = None
     local_files: Optional[list[Path]] = None
 
     @field_validator('xpv_asset_id', mode='before')
@@ -680,16 +681,29 @@ def save_fetched_asset(video: Video, output_dir: Path, download_full_track: bool
 
 
 def extract_videos_from_structures(structures: list[StructureType]) -> list[Video]:
-    # dict keyed by item pk → (video_versions, dash_manifest, item_pk)
+    # dict keyed by item pk → (video_versions, dash_manifest, item_pk, cover_photo_url)
     # item_pk is always the specific item's own pk (carousel_item.pk for carousels),
     # used as a last-resort fallback when no canonical xpv_asset_id can be extracted.
-    pk_video_versions_dict: dict[str, tuple[list[VideoVersion], Optional[str], str]] = dict()
+    pk_video_versions_dict: dict[str, tuple[list[VideoVersion], Optional[str], str, Optional[str]]] = dict()
 
     def _store(pk: Optional[str], versions: Optional[list[VideoVersion]], src: object) -> None:
-        if not pk or not versions:
+        if not pk:
             return
         manifest: Optional[str] = getattr(src, 'video_dash_manifest', None)
-        pk_video_versions_dict[pk] = (versions, manifest, pk)
+        effective_versions = versions
+        if not effective_versions and manifest and isinstance(manifest, str):
+            for raw in re.findall(r'<BaseURL>([^<]+)</BaseURL>', manifest):
+                url = html.unescape(raw).strip()
+                if url:
+                    effective_versions = [VideoVersion(url=url)]
+                    break
+        if not effective_versions:
+            return
+        cover_photo_url: Optional[str] = None
+        iv2 = getattr(src, 'image_versions2', None)
+        if iv2 and getattr(iv2, 'candidates', None):
+            cover_photo_url = iv2.candidates[0].url
+        pk_video_versions_dict[pk] = (effective_versions, manifest, pk, cover_photo_url)
 
     for s in structures:
         if isinstance(s, GraphQLResponse):
@@ -765,7 +779,7 @@ def extract_videos_from_structures(structures: list[StructureType]) -> list[Vide
                             _store(carousel_item.pk, carousel_item.video_versions, carousel_item)
 
     videos: dict[str, Video] = dict()
-    for item_pk, (video_versions, dash_manifest, fallback_pk) in pk_video_versions_dict.items():
+    for item_pk, (video_versions, dash_manifest, fallback_pk, cover_photo_url) in pk_video_versions_dict.items():
         first_url = video_versions[0].url
         if not first_url:
             continue
@@ -783,6 +797,7 @@ def extract_videos_from_structures(structures: list[StructureType]) -> list[Vide
             video = Video(
                 xpv_asset_id=xpv_asset_id,
                 full_asset=first_url,
+                cover_photo_url=cover_photo_url,
                 fetched_tracks=None
             )
             videos[xpv_asset_id] = video
@@ -814,6 +829,17 @@ def download_full_asset(video: Video, output_dir: Path) -> AssetSaveResult:
             with open(file_path, 'wb') as f:
                 f.write(download_result)
             protection = protect_file(file_path)
+            if video.cover_photo_url:
+                try:
+                    cover_data = download_file(video.cover_photo_url)
+                    if cover_data:
+                        ext = video.cover_photo_url.split('?')[0].rsplit('.', 1)[-1] or 'jpg'
+                        cover_path = output_dir / f"xpv_{_safe_id(video.xpv_asset_id)}_cover.{ext}"
+                        with open(cover_path, 'wb') as cf:
+                            cf.write(cover_data)
+                        protect_file(cover_path)
+                except Exception as cover_err:
+                    print(f"Warning: could not download cover photo for {video.xpv_asset_id}: {cover_err}")
             return AssetSaveResult(
                 success=True,
                 location=file_path,

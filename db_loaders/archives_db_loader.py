@@ -166,22 +166,28 @@ def register_archives(limit: Optional[int] = None, cancel_check: Optional[Callab
     logger.info(f"Part A - Found {len(archive_dirs)} archive directories in {root_anchor.ROOT_ARCHIVES}")
 
     # --- Step 2: fetch all already-registered external_ids in paginated batches ---
+    # Keyset pagination by id (not LIMIT/OFFSET). An OFFSET scan with no ORDER BY
+    # has no stable cross-page ordering in MySQL, so once the row count passes
+    # _REGISTER_FETCH_BATCH pages could overlap/skip and drop already-registered
+    # external_ids from this set — causing the archive to be re-registered under a
+    # NEW id and silently duplicated. Keyset paging on the PK is stable and gap-free.
     registered: set[str] = set()
-    offset = 0
+    last_id = 0
     while True:
         rows = db.execute_query(
-            "SELECT external_id FROM archive_session WHERE source_type IN ('local_har', 'local_wacz') "
-            "LIMIT %(limit)s OFFSET %(offset)s",
-            {"limit": _REGISTER_FETCH_BATCH, "offset": offset},
+            "SELECT id, external_id FROM archive_session "
+            "WHERE source_type IN ('local_har', 'local_wacz') AND id > %(last_id)s "
+            "ORDER BY id LIMIT %(limit)s",
+            {"limit": _REGISTER_FETCH_BATCH, "last_id": last_id},
             return_type="rows",
         )
         if not rows:
             break
         for row in rows:
             registered.add(row["external_id"])
+        last_id = rows[-1]["id"]
         if len(rows) < _REGISTER_FETCH_BATCH:
             break
-        offset += _REGISTER_FETCH_BATCH
 
     logger.info(f"Part A - {len(registered)} archives already registered in DB")
 
@@ -211,10 +217,19 @@ def register_archives(limit: Optional[int] = None, cancel_check: Optional[Callab
             for archive_dir, ext_id, source_type, location_alias in batch:
                 if cancel_check and cancel_check():
                     raise InterruptedError("Cancelled by user")
-                db.execute_query(
+                # ON DUPLICATE KEY UPDATE id=id is a defensive no-op: external_id
+                # is UNIQUE (V036), so a concurrent/racing registration can't crash
+                # the batch or insert a second row — it quietly resolves to the
+                # existing row instead of raising.
+                # return_type="id" yields the new auto-increment id on a real
+                # INSERT, or False when the row already existed and the statement
+                # no-opped (ON DUPLICATE KEY UPDATE id=id). Only count/log a true
+                # insert so a suppressed race-duplicate isn't reported as "registered".
+                new_id = db.execute_query(
                     """INSERT INTO archive_session
                            (external_id, archive_location, source_type)
-                       VALUES (%(external_id)s, %(archive_location)s, %(source_type)s)""",
+                       VALUES (%(external_id)s, %(archive_location)s, %(source_type)s)
+                       ON DUPLICATE KEY UPDATE id = id""",
                     {
                         "external_id": ext_id,
                         "archive_location": f"{location_alias}/{archive_dir.name}",
@@ -222,10 +237,13 @@ def register_archives(limit: Optional[int] = None, cancel_check: Optional[Callab
                     },
                     return_type="id",
                 )
-                logger.info(f"Registered new archive: {archive_dir.name} ({source_type})")
-                if emit:
-                    emit(f"Part A — registered {archive_dir.name}")
-                registered_count += 1
+                if new_id:
+                    logger.info(f"Registered new archive: {archive_dir.name} ({source_type})")
+                    if emit:
+                        emit(f"Part A — registered {archive_dir.name}")
+                    registered_count += 1
+                else:
+                    logger.debug(f"Archive already registered (race), skipped insert: {archive_dir.name}")
 
     elapsed = time.time() - start_time
     logger.info(f"Part A register_archives complete in {elapsed:.1f}s (registered {registered_count} new archives)")

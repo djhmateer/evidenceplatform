@@ -5,6 +5,7 @@ import {
     IAccountRelationsResponse,
     IArchiveSession,
     IArchiveSessionWithEntities,
+    IAttributionReport,
     ICommentsResponse,
     IExtractedEntitiesNested,
     ILikesResponse,
@@ -367,6 +368,10 @@ export const searchData = async (
 
 export const fetchRelatedTagStats = async (accountId: number): Promise<ITagStat[]> => {
     return await server.get(`account/${accountId}/related_tag_stats/`);
+}
+
+export const fetchAttributionReport = async (accountId: number): Promise<IAttributionReport> => {
+    return await server.get(`account/${accountId}/attribution-report/`);
 }
 
 export interface TieWeights {

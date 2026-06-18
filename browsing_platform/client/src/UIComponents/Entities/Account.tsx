@@ -5,11 +5,14 @@ import {
     IAccountInteractions,
     IAccountRelation,
     IAccountRelationsResponse,
+    IAttributionReport,
     IPostAndAssociatedEntities
 } from "../../types/entities";
 import {ITagStat, ITagWithType} from "../../types/tags";
 import {
+    Alert,
     Box,
+    Button,
     CircularProgress,
     Collapse,
     IconButton,
@@ -23,6 +26,7 @@ import {
     Tooltip,
     Typography
 } from "@mui/material";
+import GppMaybeIcon from '@mui/icons-material/GppMaybe';
 import HistoryIcon from '@mui/icons-material/History';
 import Post from "./Post";
 import ReactJson from "react-json-view";
@@ -31,6 +35,7 @@ import {
     fetchAccountData,
     fetchAccountInteractions,
     fetchAccountRelations,
+    fetchAttributionReport,
     fetchRelatedTagStats
 } from "../../services/DataFetcher";
 import {EntityViewerConfig} from "./EntitiesViewerConfig";
@@ -175,6 +180,89 @@ function AccountInteractionsPanel({loadingInteractions, interactions}: {
     );
 }
 
+function AttributionPanel({
+    accountId,
+    report,
+    loading,
+    error,
+    onRun,
+}: {
+    accountId?: number;
+    report: IAttributionReport | null;
+    loading: boolean;
+    error?: string | null;
+    onRun: () => void;
+}) {
+    if (loading) return <CircularProgress size={16}/>;
+
+    if (!report) {
+        return (
+            <Stack gap={1} alignItems="flex-start">
+                <Typography variant="caption" color="text.secondary">
+                    This check queries archive records to determine whether any affiliated entities
+                    (posts, comments, likes, tags) were attributed via username match only — which
+                    is ambiguous if the username was recycled by another account.
+                </Typography>
+                {error && (
+                    <Alert severity="error" sx={{fontSize: '0.8rem', width: '100%'}}>
+                        {error}
+                    </Alert>
+                )}
+                <Button size="small" variant="outlined" onClick={onRun} disabled={accountId == null}>
+                    {error ? 'Retry' : 'Run check'}
+                </Button>
+            </Stack>
+        );
+    }
+
+    if (!report.contested) {
+        return (
+            <Alert severity="success" sx={{fontSize: '0.8rem'}}>
+                {report.note}
+            </Alert>
+        );
+    }
+
+    const totalUncertain = Object.values(report.uncertain_affiliations)
+        .reduce((s, v) => s + (v?.uncertain ?? 0), 0);
+
+    return (
+        <Stack gap={1}>
+            <Alert severity={totalUncertain > 0 ? "warning" : "info"} sx={{fontSize: '0.8rem'}}>
+                {report.note}
+            </Alert>
+            <Stack gap={0.5}>
+                <Typography variant="caption" color="text.secondary">
+                    Contesting accounts (also hold username &ldquo;{report.url_suffix}&rdquo;):
+                </Typography>
+                {report.contesting_accounts.map(c => (
+                    <Link key={c.id} href={`/account/${c.id}`} underline="hover" variant="body2">
+                        {c.display_name || c.url_suffix || `Account #${c.id}`}
+                        {c.url_suffix ? ` (@${c.url_suffix})` : ''}
+                    </Link>
+                ))}
+            </Stack>
+            {totalUncertain > 0 && (
+                <Stack gap={0.25}>
+                    <Typography variant="caption" color="text.secondary">
+                        Uncertain affiliations (seen by username only, no pk in any session):
+                    </Typography>
+                    {Object.entries(report.uncertain_affiliations).map(([key, counts]) => {
+                        if (!counts || counts.uncertain === 0) return null;
+                        const label = key.replace(/_/g, ' ');
+                        return (
+                            <Typography key={key} variant="caption">
+                                {label}: {counts.uncertain} / {counts.total}
+                            </Typography>
+                        );
+                    })}
+                </Stack>
+            )}
+        </Stack>
+    );
+}
+
+
 interface IProps {
     account: IAccountAndAssociatedEntities
     viewerConfig?: EntityViewerConfig
@@ -218,16 +306,20 @@ export default function Account({
     const [relatedTags, setRelatedTags] = useState<ITagStat[] | null>(null);
     const [loadingRelatedTags, setLoadingRelatedTags] = useState(false);
 
+    const [attributionReport, setAttributionReport] = useState<IAttributionReport | null>(null);
+    const [loadingAttribution, setLoadingAttribution] = useState(false);
+    const [attributionError, setAttributionError] = useState<string | null>(null);
+
     const mergeAccountTags = (newTags: Record<number, ITagWithType[]> | undefined) => {
         if (newTags && Object.keys(newTags).length > 0) {
             setAccountTagsMap(prev => ({...prev, ...newTags}));
         }
     };
 
-    const [activeTab, setActiveTab] = useState<'relations' | 'interactions' | 'tagDistribution' | 'raw' | null>(
+    const [activeTab, setActiveTab] = useState<'relations' | 'interactions' | 'tagDistribution' | 'raw' | 'attribution' | null>(
         highlightRelationId ? 'relations' : null
     );
-    const handleTabToggle = (tab: 'relations' | 'interactions' | 'tagDistribution' | 'raw') => () => {
+    const handleTabToggle = (tab: 'relations' | 'interactions' | 'tagDistribution' | 'raw' | 'attribution') => () => {
         if (activeTab === tab) setActiveTab(null);
     };
 
@@ -271,11 +363,26 @@ export default function Account({
         setLoadingRelatedTags(false);
     }, [loadingRelatedTags, relatedTags, account.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    const runAttributionCheck = useCallback(async () => {
+        if (loadingAttribution || account.id == null) return;
+        setLoadingAttribution(true);
+        setAttributionError(null);
+        try {
+            const fetched = await fetchAttributionReport(account.id);
+            setAttributionReport(fetched);
+        } catch (err: unknown) {
+            setAttributionError(err instanceof Error ? err.message : 'Failed to load attribution report.');
+        } finally {
+            setLoadingAttribution(false);
+        }
+    }, [loadingAttribution, account.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
     useEffect(() => {
         if (activeTab === 'relations') loadRelations();
         if (activeTab === 'interactions') loadInteractions();
         if (activeTab === 'tagDistribution') loadRelatedTags();
         if (activeTab === 'raw') fetchAccountDetails();
+        // 'attribution' tab does NOT auto-load — the user clicks "Run check"
     }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const sortedPosts = useMemo(() =>
@@ -473,6 +580,14 @@ export default function Account({
                         icon={<DataObject/>} iconPosition="start"
                         onClick={handleTabToggle('raw')}
                     />
+                    {account.id != null && (
+                        <Tab
+                            value="attribution"
+                            label="Attribution"
+                            icon={<GppMaybeIcon/>} iconPosition="start"
+                            onClick={handleTabToggle('attribution')}
+                        />
+                    )}
                 </Tabs>
 
                 <Collapse in={activeTab !== null}>
@@ -506,6 +621,15 @@ export default function Account({
                                                style={{wordBreak: 'break-word'}}/>
                                 )}
                             </>
+                        )}
+                        {activeTab === 'attribution' && (
+                            <AttributionPanel
+                                accountId={account.id}
+                                report={attributionReport}
+                                loading={loadingAttribution}
+                                error={attributionError}
+                                onRun={runAttributionCheck}
+                            />
                         )}
                     </Box>
                 </Collapse>

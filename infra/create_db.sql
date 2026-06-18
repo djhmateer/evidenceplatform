@@ -22,7 +22,10 @@ create table account
     data           json                                                                        null,
     url_parts      text                                                                        null,
     post_count     int       default 0                                                         not null,
-    platform       enum ('instagram', 'facebook', 'telegram', 'youtube', 'twitter', 'threads') null
+    platform       enum ('instagram', 'facebook', 'telegram', 'youtube', 'twitter', 'threads') null,
+    merged_into_account_id int                                                                 null comment 'set when this row was soft-merged into another account; the row is an inert tombstone kept so cited URLs keep resolving',
+    constraint account_merged_into_account_id_fk
+        foreign key (merged_into_account_id) references account (id)
 )
     engine = InnoDB;
 
@@ -32,8 +35,11 @@ create index account_bio_index
 create index account_display_name_index
     on account (display_name);
 
-create index account_id_on_platform_index
+create unique index uq_account_id_on_platform
     on account (id_on_platform);
+
+create index account_merged_into_account_id_index
+    on account (merged_into_account_id);
 
 create index account_post_count_index
     on account (post_count);
@@ -132,6 +138,30 @@ create index account_archive_id_on_platform_index
 create index account_archive_url_suffix_index
     on account_archive (url_suffix);
 
+create table account_merge_log
+(
+    id                 int auto_increment
+        primary key,
+    create_date        timestamp default CURRENT_TIMESTAMP         not null,
+    keeper_account_id  int                                         not null,
+    merged_account_id  int                                         not null,
+    source             enum ('intake_auto', 'migration', 'manual') not null,
+    archive_session_id int                                         null comment 'session whose observation triggered an intake_auto merge',
+    user_id            int                                         null comment 'user who requested a manual merge',
+    merged_snapshot    json                                        null comment 'identity fields of the merged row at merge time (pre-tombstone), for audit/unmerge',
+    constraint account_merge_log_keeper_fk
+        foreign key (keeper_account_id) references account (id),
+    constraint account_merge_log_merged_fk
+        foreign key (merged_account_id) references account (id)
+)
+    engine = InnoDB;
+
+create index account_merge_log_keeper_index
+    on account_merge_log (keeper_account_id);
+
+create index account_merge_log_merged_index
+    on account_merge_log (merged_account_id);
+
 create table account_relation_archive
 (
     id                              int auto_increment
@@ -187,7 +217,7 @@ create index archive_session_archiving_date
 create index archive_session_archiving_timestamp_index
     on archive_session (archiving_timestamp);
 
-create index archive_session_external_id_index
+create unique index uq_archive_session_external_id
     on archive_session (external_id);
 
 create index idx_incorporation_queue

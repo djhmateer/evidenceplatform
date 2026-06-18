@@ -103,7 +103,18 @@ def reconcile_media(new_media: Media, existing_media: Optional[Media]) -> Media:
     if existing_media is None:
         return new_media
     existing_media.id_on_platform = reconcile_primitives(existing_media.id_on_platform, new_media.id_on_platform)
-    existing_media.url_suffix = reconcile_primitives(existing_media.url_suffix, new_media.url_suffix)
+    # video beats image regardless of which record arrived first — a DASH-only video
+    # carries video_dash_manifest only in the detail endpoint response, not in
+    # timeline/thumbnail responses. Downgrading "video" → "image" on a later record
+    # would lose the correct classification and the video url_suffix.
+    if (existing_media.media_type == "video") != (new_media.media_type == "video"):
+        existing_media.media_type = "video"
+        video_url = (new_media.url_suffix if new_media.media_type == "video"
+                     else existing_media.url_suffix)
+        existing_media.url_suffix = video_url or reconcile_primitives(existing_media.url_suffix, new_media.url_suffix)
+    else:
+        existing_media.url_suffix = reconcile_primitives(existing_media.url_suffix, new_media.url_suffix)
+        existing_media.media_type = reconcile_primitives(existing_media.media_type, new_media.media_type)
     existing_media.post_url_suffix = reconcile_primitives(existing_media.post_url_suffix, new_media.post_url_suffix)
     new_size = _local_url_size(new_media.local_url)
     existing_size = _local_url_size(existing_media.local_url)
@@ -113,7 +124,6 @@ def reconcile_media(new_media: Media, existing_media: Optional[Media]) -> Media:
         existing_media.thumbnail_status = 'pending'
     else:
         existing_media.local_url = reconcile_primitives(existing_media.local_url, new_media.local_url)
-    existing_media.media_type = reconcile_primitives(existing_media.media_type, new_media.media_type)
     existing_media.data = reconcile_dicts(existing_media.data, new_media.data)
     return existing_media
 

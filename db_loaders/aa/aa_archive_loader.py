@@ -83,22 +83,26 @@ def register_aa_archives(limit: Optional[int] = None) -> None:
     rows = _load_xlsx_rows(XLSX_PATH)
     logger.info(f"Part A — {len(rows)} rows in xlsx")
 
-    # Batch-fetch all already-registered AA external_ids
+    # Batch-fetch all already-registered AA external_ids.
+    # Keyset pagination by id: an OFFSET scan with no ORDER BY has no stable
+    # cross-page ordering in MySQL, so above one page it could drop already-
+    # registered external_ids and re-insert duplicates. Paging on the PK is stable.
     registered: set[str] = set()
-    offset = 0
+    last_id = 0
     batch = 5_000
     while True:
         existing = db.execute_query(
-            "SELECT external_id FROM archive_session WHERE source_type = 'AA_xlsx' "
-            "LIMIT %(limit)s OFFSET %(offset)s",
-            {"limit": batch, "offset": offset},
+            "SELECT id, external_id FROM archive_session "
+            "WHERE source_type = 'AA_xlsx' AND id > %(last_id)s "
+            "ORDER BY id LIMIT %(limit)s",
+            {"limit": batch, "last_id": last_id},
             return_type="rows",
         ) or []
         for r in existing:
             registered.add(r["external_id"])
         if len(existing) < batch:
             break
-        offset += batch
+        last_id = existing[-1]["id"]
     logger.info(f"Part A — {len(registered)} AA sessions already registered")
 
     skipped_no_id = 0
@@ -139,19 +143,30 @@ def register_aa_archives(limit: Optional[int] = None) -> None:
         })
         registered.add(external_id)
 
+    # ON DUPLICATE KEY UPDATE id=id is a defensive no-op: external_id is UNIQUE
+    # (V036), so a racing/duplicate registration resolves to the existing row
+    # instead of raising and aborting the batch.
     insert_sql = """INSERT INTO archive_session
                        (external_id, archived_url_suffix, archive_location, notes,
                         source_type, platform, incorporation_status)
                    VALUES (%(external_id)s, %(archived_url_suffix)s, %(archive_location)s,
-                           %(notes)s, 'AA_xlsx', 'instagram', 'pending')"""
+                           %(notes)s, 'AA_xlsx', 'instagram', 'pending')
+                   ON DUPLICATE KEY UPDATE id = id"""
+    # return_type="id" is the new auto-increment id on a real INSERT, or False
+    # when the row already existed and the statement no-opped (ON DUPLICATE KEY
+    # UPDATE id=id). Count only true inserts so a suppressed duplicate isn't
+    # reported as registered.
+    inserted = 0
     for batch_start in range(0, len(to_insert), _REGISTER_INSERT_BATCH):
         batch = to_insert[batch_start:batch_start + _REGISTER_INSERT_BATCH]
         with db.transaction_batch():
             for params in batch:
-                db.execute_query(insert_sql, params, return_type="id")
-                logger.info(f"Registered {params['external_id']} ({params['archived_url_suffix']})")
-
-    inserted = len(to_insert)
+                new_id = db.execute_query(insert_sql, params, return_type="id")
+                if new_id:
+                    logger.info(f"Registered {params['external_id']} ({params['archived_url_suffix']})")
+                    inserted += 1
+                else:
+                    logger.debug(f"AA session already registered (race), skipped: {params['external_id']}")
     elapsed = time.time() - start
     logger.info(
         f"Part A complete in {elapsed:.1f}s — inserted {inserted}, "
