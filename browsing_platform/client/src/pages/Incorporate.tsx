@@ -4,6 +4,7 @@ import {
     Button,
     Chip,
     CircularProgress,
+    MenuItem,
     Paper,
     Stack,
     Table,
@@ -12,6 +13,7 @@ import {
     TableContainer,
     TableHead,
     TableRow,
+    TextField,
     Typography,
 } from '@mui/material';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
@@ -61,6 +63,10 @@ export default function IncorporatePage() {
     const [running, setRunning] = useState(false);
     const [starting, setStarting] = useState(false);
     const [stopping, setStopping] = useState(false);
+    // Optional test scope (overrides server-side env defaults for a single run).
+    const [mode, setMode] = useState<'register' | 'rerun'>('register');
+    const [limit, setLimit] = useState('');
+    const [filter, setFilter] = useState('');
     const [history, setHistory] = useState<Job[]>([]);
     const [logs, setLogs] = useState<LogLine[]>([]);
     const [wsConnected, setWsConnected] = useState(false);
@@ -147,7 +153,12 @@ export default function IncorporatePage() {
     const handleStart = async () => {
         setStarting(true);
         setLogs([]);
-        const data = await server.post('incorporate/start', {});
+        const params = new URLSearchParams();
+        if (mode !== 'register') params.set('mode', mode);
+        if (limit.trim() !== '') params.set('limit', limit.trim());
+        if (filter.trim() !== '') params.set('filter', filter.trim());
+        const qs = params.toString();
+        const data = await server.post(`incorporate/start${qs ? `?${qs}` : ''}`, {});
         if (data?.status === 'started') {
             setRunning(true);
         } else {
@@ -218,6 +229,48 @@ export default function IncorporatePage() {
                         color={wsConnected ? 'success' : 'default'}
                         size="small"
                         variant="outlined"
+                    />
+                </Stack>
+
+                {/* Optional test scope — overrides server-side env defaults for one run */}
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                    Test scope (optional). Limit/Filter select which archives are registered (or re-queued);
+                    parsing, extraction and thumbnails then process everything still pending.
+                </Typography>
+                <Stack direction="row" alignItems="center" gap={2} mb={3} flexWrap="wrap">
+                    <TextField
+                        select
+                        label="Mode"
+                        size="small"
+                        value={mode}
+                        onChange={e => setMode(e.target.value as 'register' | 'rerun')}
+                        disabled={running || starting}
+                        sx={{ minWidth: 200 }}
+                        helperText="rerun re-incorporates existing archives in place"
+                    >
+                        <MenuItem value="register">Register new</MenuItem>
+                        <MenuItem value="rerun">Re-run latest</MenuItem>
+                    </TextField>
+                    <TextField
+                        label="Limit"
+                        size="small"
+                        type="number"
+                        value={limit}
+                        onChange={e => setLimit(e.target.value)}
+                        disabled={running || starting}
+                        placeholder="env default"
+                        sx={{ width: 160 }}
+                        helperText="newest N to register/requeue; blank = default"
+                    />
+                    <TextField
+                        label="Filter"
+                        size="small"
+                        value={filter}
+                        onChange={e => setFilter(e.target.value)}
+                        disabled={running || starting}
+                        placeholder="e.g. eran or eran_2026*"
+                        sx={{ minWidth: 240 }}
+                        helperText="match archive folder name"
                     />
                 </Stack>
 

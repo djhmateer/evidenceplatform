@@ -42,13 +42,21 @@ USAGE:
         uv run db_loaders/archives_db_loader.py <stage> --limit N
 
     Options:
-        --limit N         Process only N new archives (useful for testing)
+        --limit N         Process only N archives, newest-first (useful for testing)
+        --filter PATTERN  Only process archives whose directory name matches a
+                          substring or glob (e.g. 'eran' or 'eran_2026*').
+                          Applies to register/full/rerun.
         --archives-dir    Override the archives directory path
 
     Available stages:
 
     • full           - Run all 4 parts (A → B → C → D) sequentially
                       Use this for normal operation
+
+    • rerun          - Re-incorporate existing archives: requeue the latest N
+                      already-registered archives (respecting --limit/--filter)
+                      back to 'pending' and re-run B → C → D over them. Idempotent,
+                      so repeated test runs do not accumulate new rows.
 
     • register       - Run only Part A (scan and register new archives)
 
@@ -118,13 +126,16 @@ EXAMPLE WORKFLOWS:
 """
 
 import asyncio
+import fnmatch
 import json
 import logging
+import re
 import sys
 import os
 import time
 import traceback
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Callable, Optional
 
 from dateutil import parser
@@ -150,7 +161,67 @@ _REGISTER_FETCH_BATCH = 5_000   # rows per page when loading existing registrati
 _REGISTER_INSERT_BATCH = 500    # archives per transaction when inserting new ones
 
 
-def register_archives(limit: Optional[int] = None, cancel_check: Optional[Callable[[], bool]] = None, emit: Optional[Callable[[str], None]] = None):
+# Archive directories are named "{profile}_{YYYYMMDD}_{HHMMSS}" (see archiver/archive.py),
+# i.e. the capture timestamp is always the trailing \d{8}_\d{6}. Sorting by the raw
+# directory name would order by PROFILE name first (so "zoe_2020…" outranks
+# "aaron_2026…"), which is not chronological. We sort by the embedded timestamp instead.
+_ARCHIVE_TS_RE = re.compile(r"(\d{8})_(\d{6})$")
+
+
+def _archive_timestamp_key(name: str) -> str:
+    """Return the 14-digit capture timestamp embedded in an archive directory name
+    (``YYYYMMDDHHMMSS``) for chronological sorting, or '' when the name doesn't
+    follow the convention (those sort oldest/last under a reverse sort)."""
+    m = _ARCHIVE_TS_RE.search(name or "")
+    return (m.group(1) + m.group(2)) if m else ""
+
+
+def _name_matches(name: str, pattern: Optional[str]) -> bool:
+    """Case-insensitive match of an archive directory name against ``pattern``.
+
+    A plain substring (no glob metacharacters) is treated as ``*substring*`` so
+    ``filter=eran`` matches ``eran_20250530_160037``; patterns containing
+    ``* ? [ ]`` are matched verbatim with fnmatch (e.g. ``eran_2026*``).
+    """
+    if not pattern:
+        return True
+    p = pattern.lower()
+    if not any(c in p for c in "*?[]"):
+        p = f"*{p}*"
+    return fnmatch.fnmatch(name.lower(), p)
+
+
+def set_archives_dir(path) -> Path:
+    """Point the ingestion pipeline at a different archives root at runtime.
+
+    Updates ``root_anchor.ROOT_ARCHIVES`` and re-binds the name in every already
+    imported module that captured it via ``from root_anchor import ROOT_ARCHIVES``
+    (those hold their own reference and would otherwise keep using the old path).
+    Rather than hardcoding a module list, this patches any loaded module whose
+    ``ROOT_ARCHIVES`` still equals the previous value, so new importers are covered
+    automatically. Returns the new path.
+
+    NOTE: this mutates process-wide global state and is NOT thread-safe. It is
+    intended for the single-job incorporation pipeline (and the CLI), where no
+    other archive ingestion runs concurrently. The caller is responsible for
+    restoring the original path when done (see incorporation_service).
+    """
+    path = Path(path)
+    old = root_anchor.ROOT_ARCHIVES
+    root_anchor.ROOT_ARCHIVES = path
+    for module in list(sys.modules.values()):
+        if module is None or module is root_anchor:
+            continue
+        try:
+            if getattr(module, "ROOT_ARCHIVES", None) == old:
+                module.ROOT_ARCHIVES = path
+        except Exception:
+            # Some modules raise on attribute access (lazy/proxy modules); skip them.
+            continue
+    return path
+
+
+def register_archives(limit: Optional[int] = None, cancel_check: Optional[Callable[[], bool]] = None, emit: Optional[Callable[[str], None]] = None, name_filter: Optional[str] = None):
     """
     Part A of full - scans directory, puts in an archive_session record for each
     unregistered archive.
@@ -162,8 +233,21 @@ def register_archives(limit: Optional[int] = None, cancel_check: Optional[Callab
     start_time = time.time()
 
     # --- Step 1: collect archive directories from disk ---
-    archive_dirs = [d for d in root_anchor.ROOT_ARCHIVES.iterdir() if d.is_dir()]
-    logger.info(f"Part A - Found {len(archive_dirs)} archive directories in {root_anchor.ROOT_ARCHIVES}")
+    # Sort newest-first by the capture timestamp embedded in the directory name
+    # (see _archive_timestamp_key) — NOT by the raw name, which would order by
+    # profile name first. This makes `limit` mean "the latest N archives by
+    # capture time" (the usual target when verifying that recently captured
+    # content ingests). The directory name is the tiebreaker for determinism.
+    # An optional `name_filter` narrows the set to specific archives (substring or glob).
+    archive_dirs = sorted(
+        (d for d in root_anchor.ROOT_ARCHIVES.iterdir() if d.is_dir() and _name_matches(d.name, name_filter)),
+        key=lambda d: (_archive_timestamp_key(d.name), d.name),
+        reverse=True,
+    )
+    logger.info(
+        f"Part A - Found {len(archive_dirs)} archive directories in {root_anchor.ROOT_ARCHIVES}"
+        + (f" matching filter '{name_filter}'" if name_filter else "")
+    )
 
     # --- Step 2: fetch all already-registered external_ids in paginated batches ---
     # Keyset pagination by id (not LIMIT/OFFSET). An OFFSET scan with no ORDER BY
@@ -247,6 +331,81 @@ def register_archives(limit: Optional[int] = None, cancel_check: Optional[Callab
 
     elapsed = time.time() - start_time
     logger.info(f"Part A register_archives complete in {elapsed:.1f}s (registered {registered_count} new archives)")
+
+
+def requeue_archives(limit: Optional[int] = None, cancel_check: Optional[Callable[[], bool]] = None, emit: Optional[Callable[[str], None]] = None, name_filter: Optional[str] = None) -> int:
+    """Re-incorporation entry point (alternative to Part A).
+
+    Instead of registering *new* archive folders, this resets the
+    ``incorporation_status`` of already-registered sessions back to 'pending' so
+    the existing pipeline (Parts B → C → D) re-runs over them. Because the
+    pipeline is idempotent (canonical id matching, ON DUPLICATE KEY, re-synthesis
+    from all archives), re-running the *same* fixed cohort does not accumulate new
+    rows — which is the property that makes repeated incorporation tests safe.
+
+    Selection is newest-first by the capture timestamp embedded in the archive
+    directory name (consistent with register_archives — NOT by session id, which
+    reflects registration order, not capture time) and bounded by ``limit``;
+    ``name_filter`` narrows to specific archives by directory name (substring or
+    glob). Returns the number of sessions requeued.
+    """
+    start_time = time.time()
+
+    # Lightweight columns only — the structures JSON column is large and not needed
+    # here. We can't push ORDER BY / LIMIT into SQL because the capture time lives in
+    # the directory name (archive_location), not in an indexed column; so we fetch the
+    # candidate rows and sort/slice in Python (small columns, thousands of rows at most).
+    rows = db.execute_query(
+        "SELECT id, external_id, archive_location FROM archive_session "
+        "WHERE source_type IN ('local_har', 'local_wacz')",
+        {},
+        return_type="rows",
+    ) or []
+
+    def _dir_name(row) -> str:
+        # archive_location is stored as "{alias}/{dir.name}" (forward slash, see
+        # register_archives); guard against NULL/legacy rows so a single bad row
+        # doesn't abort the whole requeue.
+        return (row.get("archive_location") or "").rsplit("/", 1)[-1]
+
+    if name_filter:
+        # Match on the archive directory name, consistent with how register_archives filters.
+        rows = [r for r in rows if _name_matches(_dir_name(r), name_filter)]
+
+    # Newest-first by capture timestamp; id is the deterministic tiebreaker.
+    rows.sort(key=lambda r: (_archive_timestamp_key(_dir_name(r)), r["id"]), reverse=True)
+
+    if limit is not None:
+        rows = rows[:limit]
+
+    ids = [r["id"] for r in rows]
+    logger.info(
+        f"Re-incorporate - {len(ids)} archives to requeue"
+        + (f" matching filter '{name_filter}'" if name_filter else "")
+    )
+
+    # One bounded UPDATE per chunk (a single statement, not per-row) inside one
+    # transaction so the whole requeue is atomic.
+    requeued = 0
+    with db.transaction_batch():
+        for batch_start in range(0, len(ids), _REGISTER_INSERT_BATCH):
+            if cancel_check and cancel_check():
+                raise InterruptedError("Cancelled by user")
+            chunk = ids[batch_start: batch_start + _REGISTER_INSERT_BATCH]
+            placeholders = ", ".join(["%s"] * len(chunk))
+            db.execute_query(
+                f"UPDATE archive_session SET incorporation_status = 'pending', extraction_error = NULL "
+                f"WHERE id IN ({placeholders})",
+                chunk,
+                return_type="none",
+            )
+            requeued += len(chunk)
+            if emit:
+                emit(f"Re-incorporate — requeued {requeued}/{len(ids)} archives")
+
+    elapsed = time.time() - start_time
+    logger.info(f"Re-incorporate requeue complete in {elapsed:.1f}s (requeued {requeued} archives)")
+    return requeued
 
 
 # ---------------------------------------------------------------------------
@@ -824,9 +983,8 @@ if __name__ == "__main__":
     )
 
     import argparse
-    from pathlib import Path
 
-    valid_stages = ["register", "parse", "extract", "full", "add_attachments", "clear_errors", "add_metadata"]
+    valid_stages = ["register", "parse", "extract", "full", "rerun", "add_attachments", "clear_errors", "add_metadata"]
 
     arg_parser = argparse.ArgumentParser(description="Archive Database Loader")
     arg_parser.add_argument("stage", nargs="?", choices=valid_stages,
@@ -834,7 +992,10 @@ if __name__ == "__main__":
     arg_parser.add_argument("--archives-dir", type=str, default=None,
                             help="Override the archives directory path (default: archives/ in project root)")
     arg_parser.add_argument("--limit", type=int, default=None,
-                            help="Limit number of archives to process (default: no limit)")
+                            help="Limit number of archives to process; newest-first (default: no limit)")
+    arg_parser.add_argument("--filter", type=str, default=None,
+                            help="Only process archives whose directory name matches this substring or glob "
+                                 "(e.g. 'eran' or 'eran_2026*'). Applies to register/full/rerun.")
     args = arg_parser.parse_args()
 
     if args.archives_dir:
@@ -842,12 +1003,7 @@ if __name__ == "__main__":
         if not archives_path.exists():
             print(f"Error: archives directory does not exist: {archives_path}")
             sys.exit(1)
-        # Override ROOT_ARCHIVES in all modules that import it
-        import db_loaders.db_intake as _db_intake
-        import db_loaders.thumbnail_generator as _thumbnail_gen
-        root_anchor.ROOT_ARCHIVES = archives_path
-        root_anchor.ROOT_ARCHIVES = archives_path
-        globals()['ROOT_ARCHIVES'] = archives_path
+        set_archives_dir(archives_path)
         logger.info(f"Using custom archives directory: {archives_path}")
 
     if args.stage:
@@ -856,19 +1012,22 @@ if __name__ == "__main__":
         stage = input(f"Enter stage ({', '.join(valid_stages)}): ").strip().lower()
 
     if stage == "register":
-        register_archives(limit=args.limit)
+        register_archives(limit=args.limit, name_filter=args.filter)
     elif stage == "parse":
         parse_archives(limit=args.limit)
     elif stage == "extract":
         extract_entities(limit=args.limit)
-    elif stage == "full":
+    elif stage in ("full", "rerun"):
         import time
         full_start = time.time()
         timings = {}
 
-        # Part A: Register archives
+        # Part A: Register new archives, OR (rerun) requeue the latest existing ones
         part_a_start = time.time()
-        register_archives(limit=args.limit)
+        if stage == "rerun":
+            requeue_archives(limit=args.limit, name_filter=args.filter)
+        else:
+            register_archives(limit=args.limit, name_filter=args.filter)
         timings['A'] = time.time() - part_a_start
 
         # Part B: Parse archives
