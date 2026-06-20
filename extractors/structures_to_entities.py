@@ -211,8 +211,12 @@ def nest_entities_from_archive_session(entities: ExtractedEntitiesFlattened) -> 
     orphaned_posts: list[PostAndAssociatedEntities] = []
     orphaned_media: list[MediaAndAssociatedEntities] = []
 
-    account_suffix_map: dict[str, AccountAndAssociatedEntities] = {}
-    account_id_map: dict[str, AccountAndAssociatedEntities] = {}
+    # Maps are keyed by (platform, identifier): Instagram and Threads share the Meta
+    # pk space, so two same-pk cross-platform entities in one mixed session must not
+    # collide here (last-writer-wins would mis-nest one platform's children under the
+    # other). Every extracted entity carries a platform, so lookups compose it too.
+    account_suffix_map: dict[tuple, AccountAndAssociatedEntities] = {}
+    account_id_map: dict[tuple, AccountAndAssociatedEntities] = {}
     for account in entities.accounts:
         account_entity = AccountAndAssociatedEntities(
             **account.model_dump(),
@@ -220,19 +224,19 @@ def nest_entities_from_archive_session(entities: ExtractedEntitiesFlattened) -> 
             account_relations=[]
         )
         if account.url_suffix:
-            account_suffix_map[account.url_suffix] = account_entity
+            account_suffix_map[(account.platform, account.url_suffix)] = account_entity
         if account.id_on_platform:
-            account_id_map[account.id_on_platform] = account_entity
+            account_id_map[(account.platform, account.id_on_platform)] = account_entity
         nested_accounts.append(account_entity)
 
-    def _find_account(url_suffix: Optional[str], id_on_platform: Optional[str]) -> Optional[AccountAndAssociatedEntities]:
-        if url_suffix and url_suffix in account_suffix_map:
-            return account_suffix_map[url_suffix]
-        if id_on_platform and id_on_platform in account_id_map:
-            return account_id_map[id_on_platform]
+    def _find_account(platform, url_suffix: Optional[str], id_on_platform: Optional[str]) -> Optional[AccountAndAssociatedEntities]:
+        if url_suffix and (platform, url_suffix) in account_suffix_map:
+            return account_suffix_map[(platform, url_suffix)]
+        if id_on_platform and (platform, id_on_platform) in account_id_map:
+            return account_id_map[(platform, id_on_platform)]
         return None
 
-    post_map: dict[str, PostAndAssociatedEntities] = {}
+    post_map: dict[tuple, PostAndAssociatedEntities] = {}
     for post in entities.posts:
         post_entity = PostAndAssociatedEntities(
             **post.model_dump(),
@@ -242,20 +246,21 @@ def nest_entities_from_archive_session(entities: ExtractedEntitiesFlattened) -> 
             post_tagged_accounts=[],
             post_author=None
         )
-        account_entity = _find_account(post.account_url_suffix, post.account_id_on_platform)
+        account_entity = _find_account(post.platform, post.account_url_suffix, post.account_id_on_platform)
         if account_entity is not None:
             post_entity.post_author = account_entity
             account_entity.account_posts.append(post_entity)
         else:
             orphaned_posts.append(post_entity)
         if post.id_on_platform is not None:
-            post_map[post.id_on_platform] = post_entity
+            post_map[(post.platform, post.id_on_platform)] = post_entity
 
     for media in entities.media:
-        if media.post_id_on_platform is not None and media.post_id_on_platform in post_map:
-            post_map[media.post_id_on_platform].post_media.append(MediaAndAssociatedEntities(
+        parent_key = (media.platform, media.post_id_on_platform)
+        if media.post_id_on_platform is not None and parent_key in post_map:
+            post_map[parent_key].post_media.append(MediaAndAssociatedEntities(
                 **media.model_dump(),
-                media_parent_post=post_map[media.post_id_on_platform]
+                media_parent_post=post_map[parent_key]
             ))
         else:
             orphaned_media.append(MediaAndAssociatedEntities(
@@ -264,21 +269,24 @@ def nest_entities_from_archive_session(entities: ExtractedEntitiesFlattened) -> 
             ))
 
     for comment in entities.comments:
-        if comment.post_id_on_platform and comment.post_id_on_platform in post_map:
-            post_map[comment.post_id_on_platform].post_comments.append(comment)
+        parent_key = (comment.platform, comment.post_id_on_platform)
+        if comment.post_id_on_platform and parent_key in post_map:
+            post_map[parent_key].post_comments.append(comment)
 
     for like in entities.likes:
-        if like.post_id_on_platform and like.post_id_on_platform in post_map:
-            post_map[like.post_id_on_platform].post_likes.append(like)
+        parent_key = (like.platform, like.post_id_on_platform)
+        if like.post_id_on_platform and parent_key in post_map:
+            post_map[parent_key].post_likes.append(like)
 
     for tagged in entities.tagged_accounts:
-        if tagged.context_post_id_on_platform and tagged.context_post_id_on_platform in post_map:
-            post_map[tagged.context_post_id_on_platform].post_tagged_accounts.append(tagged)
+        parent_key = (tagged.platform, tagged.context_post_id_on_platform)
+        if tagged.context_post_id_on_platform and parent_key in post_map:
+            post_map[parent_key].post_tagged_accounts.append(tagged)
 
     for relation in entities.account_relations:
         account_entity = (
-            _find_account(relation.follower_account_url_suffix, relation.follower_account_id_on_platform)
-            or _find_account(relation.followed_account_url_suffix, relation.followed_account_id_on_platform)
+            _find_account(relation.platform, relation.follower_account_url_suffix, relation.follower_account_id_on_platform)
+            or _find_account(relation.platform, relation.followed_account_url_suffix, relation.followed_account_id_on_platform)
         )
         if account_entity is not None:
             account_entity.account_relations.append(relation)
@@ -385,11 +393,18 @@ def deduplicate_list_by_multiple_keys(
 
 
 def deduplicate_entities(entities: ExtractedEntitiesFlattened) -> ExtractedEntitiesFlattened:
+    # Identity is per-platform: Instagram and Threads share the Meta pk space, so
+    # every identifier key is composed with platform as a tuple. The `url` keys are
+    # already platform-distinct (reconstruct_url embeds the platform domain), EXCEPT
+    # media.url, which resolves to the shared cdninstagram.com CDN for both platforms
+    # and so must also be composed. Each key returns None (not a (platform, None)
+    # tuple) when the identifier is absent, so the union-find never collapses
+    # identifier-less entities of the same platform.
     return ExtractedEntitiesFlattened(
         accounts=deduplicate_list_by_multiple_keys(
             entities.accounts,
             [
-                lambda x: x.id_on_platform,
+                lambda x: (x.platform, x.id_on_platform) if x.id_on_platform else None,
                 lambda x: x.url
             ],
             reconcile_accounts
@@ -397,7 +412,7 @@ def deduplicate_entities(entities: ExtractedEntitiesFlattened) -> ExtractedEntit
         posts=deduplicate_list_by_multiple_keys(
             entities.posts,
             [
-                lambda x: x.id_on_platform,
+                lambda x: (x.platform, x.id_on_platform) if x.id_on_platform else None,
                 lambda x: x.url
             ],
             reconcile_posts
@@ -405,23 +420,23 @@ def deduplicate_entities(entities: ExtractedEntitiesFlattened) -> ExtractedEntit
         media=deduplicate_list_by_multiple_keys(
             entities.media,
             [
-                lambda x: x.id_on_platform,
-                lambda x: x.url
+                lambda x: (x.platform, x.id_on_platform) if x.id_on_platform else None,
+                lambda x: (x.platform, x.url) if x.url else None
             ],
             reconcile_media
         ),
         comments=deduplicate_list_by_multiple_keys(entities.comments, [
-            lambda x: x.id_on_platform,
+            lambda x: (x.platform, x.id_on_platform) if x.id_on_platform else None,
             lambda x: x.url
         ]),
         likes=deduplicate_list_by_multiple_keys(entities.likes, [
-            lambda x: x.id_on_platform,
+            lambda x: (x.platform, x.id_on_platform) if x.id_on_platform else None,
         ]),
         account_relations=deduplicate_list_by_multiple_keys(entities.account_relations, [
-            lambda x: x.id_on_platform,
+            lambda x: (x.platform, x.id_on_platform) if x.id_on_platform else None,
         ]),
         tagged_accounts=deduplicate_list_by_multiple_keys(entities.tagged_accounts, [
-            lambda x: x.id_on_platform,
+            lambda x: (x.platform, x.id_on_platform) if x.id_on_platform else None,
             lambda x: "_".join([
                 x.tagged_account_url or "",
                 x.context_post_url or "",

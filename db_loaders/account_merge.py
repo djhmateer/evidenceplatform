@@ -136,6 +136,17 @@ def merge_account_into(
             f"Refusing to merge: accounts {keeper_id} and {merged_id} hold different platform ids "
             f"({keeper['id_on_platform']!r} vs {merged['id_on_platform']!r}) — they are distinct profiles"
         )
+    # Same pk on two platforms is two identities, not a duplicate (IG and Threads
+    # share the Meta pk space). Symmetric to the differing-pk rule above.
+    if keeper["id_on_platform"] and merged["id_on_platform"] \
+            and keeper["id_on_platform"] == merged["id_on_platform"] \
+            and keeper["platform"] and merged["platform"] \
+            and keeper["platform"] != merged["platform"]:
+        raise ValueError(
+            f"Refusing to merge: accounts {keeper_id} and {merged_id} share pk "
+            f"{keeper['id_on_platform']!r} but are on different platforms "
+            f"({keeper['platform']!r} vs {merged['platform']!r}) — distinct cross-platform profiles"
+        )
 
     _repoint_account_archives(keeper_id, merged_id)
 
@@ -345,26 +356,29 @@ def auto_merge_shadowed_stubs(accounts: list, archive_session_id: Optional[int])
 
     Returns the number of merges performed.
     """
-    bindings: dict = {}  # username -> set of pks asserted for it in this batch
+    # Identity is per-platform (IG and Threads share the Meta pk space), so a stub is
+    # only the same profile as a pk-holder when they share BOTH the username and the
+    # platform. Bindings, holders and stubs are all keyed by (platform, ...).
+    bindings: dict = {}  # (platform, username) -> set of pks asserted for it in this batch
     for a in accounts:
         if a.id_on_platform and is_valid_identifier(a.url_suffix):
-            bindings.setdefault(a.url_suffix, set()).add(a.id_on_platform)
+            bindings.setdefault((a.platform, a.url_suffix), set()).add(a.id_on_platform)
     if not bindings:
         return 0
 
-    urls = list(bindings)
+    urls = list({url for (_pf, url) in bindings})
     pks = list({pk for pk_set in bindings.values() for pk in pk_set})
     ph_urls = ','.join(['%s'] * len(urls))
     ph_pks = ','.join(['%s'] * len(pks))
     holder_rows = db.execute_query(
-        f"""SELECT id, id_on_platform FROM account
+        f"""SELECT id, id_on_platform, platform FROM account
             WHERE id_on_platform IN ({ph_pks}) AND merged_into_account_id IS NULL""",
         pks,
         return_type="rows"
     ) or []
-    holder_by_pk = {r["id_on_platform"]: r["id"] for r in holder_rows}
+    holder_by_pk = {(r["platform"], r["id_on_platform"]): r["id"] for r in holder_rows}
     stub_rows = db.execute_query(
-        f"""SELECT id, url_suffix FROM account
+        f"""SELECT id, url_suffix, platform FROM account
             WHERE url_suffix IN ({ph_urls}) AND id_on_platform IS NULL
               AND merged_into_account_id IS NULL""",
         urls,
@@ -372,19 +386,19 @@ def auto_merge_shadowed_stubs(accounts: list, archive_session_id: Optional[int])
     ) or []
     stubs_by_url: dict = {}
     for r in stub_rows:
-        stubs_by_url.setdefault(r["url_suffix"], []).append(r["id"])
+        stubs_by_url.setdefault((r["platform"], r["url_suffix"]), []).append(r["id"])
 
     merged_count = 0
-    for url, pk_set in bindings.items():
+    for (platform, url), pk_set in bindings.items():
         if len(pk_set) != 1:
             # Two pks claiming one username inside a single archive — ambiguous,
             # leave the rows alone rather than guess.
-            logger.warning(f"Username {url!r} bound to multiple pks in one archive: {sorted(pk_set)}")
+            logger.warning(f"Username {url!r} ({platform}) bound to multiple pks in one archive: {sorted(pk_set)}")
             continue
-        holder_id = holder_by_pk.get(next(iter(pk_set)))
+        holder_id = holder_by_pk.get((platform, next(iter(pk_set))))
         if holder_id is None:
             continue
-        for stub_id in stubs_by_url.get(url, []):
+        for stub_id in stubs_by_url.get((platform, url), []):
             if stub_id != holder_id:
                 merge_account_into(holder_id, stub_id, source="intake_auto",
                                    archive_session_id=archive_session_id)
