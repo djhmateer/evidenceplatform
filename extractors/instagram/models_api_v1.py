@@ -2,7 +2,7 @@ from typing import List, Optional, Any, Union
 
 from pydantic import ConfigDict, BaseModel, Field, field_validator
 
-from extractors.models import VideoVersion, InstagramImageVersions2, InstagramCarouselMedia
+from extractors.instagram.models import VideoVersion, InstagramImageVersions2, InstagramCarouselMedia
 
 
 def _str_id(v: Any) -> Any:

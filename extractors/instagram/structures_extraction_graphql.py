@@ -1,8 +1,8 @@
 from typing import Optional, Dict
 from pydantic import BaseModel
-from extractors.models import StoriesFeed, CommentsConnection, MediaShortcode
-from extractors.models_api_v1 import LikersApiV1
-from extractors.models_graphql import ProfileTimelineGraphQL, FriendsListGraphQL, ReelsMediaConnection, \
+from extractors.instagram.models import StoriesFeed, CommentsConnection, MediaShortcode
+from extractors.instagram.models_api_v1 import LikersApiV1
+from extractors.instagram.models_graphql import ProfileTimelineGraphQL, FriendsListGraphQL, ReelsMediaConnection, \
     ClipsUserConnection, ProfileInfoUserGraphQL
 
 

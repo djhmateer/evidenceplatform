@@ -18,7 +18,7 @@ from archiver.archive import (
     get_tls_cert_info,
     screen_record,
 )
-from archiver.automated_scripts.instagram_followers_scraper import run_followers_automation
+from archiver.instagram.automated_scripts.instagram_followers_scraper import run_followers_automation
 from archiver.dialogs import (
     DialogForm,
     FormFieldBool,

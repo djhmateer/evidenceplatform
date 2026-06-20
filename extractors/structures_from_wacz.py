@@ -12,26 +12,20 @@ from extractors.extract_videos import (
     Video, save_fetched_asset,
     accumulate_video_segment, reconcile_video_dicts,
 )
-from extractors.models_har import HarRequest
-from extractors.structures_extraction import StructureType
-from extractors.structures_extraction_api_v1 import extract_data_from_api_v1_entry
-from extractors.structures_extraction_graphql import extract_graphql_from_response, is_graphql_url
-from extractors.structures_extraction_html import extract_data_from_html_entry
+from extractors.structures_extraction import StructureType, extract_structure_from_entry
 
 
-def _make_minimal_har_request(url: str) -> HarRequest:
-    """Construct the minimal HarRequest needed by existing entry parsers (only url is used)."""
-    return HarRequest(
-        method='GET',
-        url=url,
-        httpVersion='HTTP/1.1',
-        cookies=[],
-        headers=[],
-        queryString=[],
-        postData=None,
-        headersSize=-1,
-        bodySize=-1,
-    )
+def _make_har_entry(url: str, mime: str, text: str) -> dict:
+    """Wrap a WARC response as the minimal HAR-entry shape ``extract_structure_from_entry``
+    expects (only url / mimeType / text are consulted; WACZ has no POST params)."""
+    return {
+        "request": {
+            "method": "GET", "url": url, "httpVersion": "HTTP/1.1",
+            "cookies": [], "headers": [], "queryString": [],
+            "postData": None, "headersSize": -1, "bodySize": -1,
+        },
+        "response": {"content": {"mimeType": mime or "", "text": text}},
+    }
 
 
 def _decode_response_body(record) -> Optional[bytes]:
@@ -101,45 +95,25 @@ def scan_wacz(wacz_path: Path, output_dir: Path) -> tuple[list[StructureType], l
                     # Strip that prefix to restore the original URL for matching.
                     clean_url = url.split('?__wb_method=')[0] if '?__wb_method=' in url else url
 
-                    # --- Structures (GraphQL, API v1, HTML) ---
-                    try:
-                        if is_graphql_url(clean_url):
+                    # --- Structures (host-routed: Instagram, Threads, ...) ---
+                    # Only text-shaped responses can carry a structure; skip
+                    # decoding binary media bodies (handled below by content-type).
+                    is_structurey = (
+                        'graphql' in clean_url or '/api/' in clean_url
+                        or ct.startswith('text/html') or ct.startswith('application/json')
+                        or ct.startswith('text/javascript') or ct.startswith('application/x-javascript')
+                    )
+                    if is_structurey:
+                        try:
                             body = _decode_response_body(record)
                             if body:
-                                try:
-                                    structure = extract_graphql_from_response(json.loads(body))
-                                    if structure:
-                                        structures.append(structure)
-                                except Exception as e:
-                                    print(f"[wacz] GraphQL parse error for {clean_url}: {e}")
-
-                        elif 'instagram.com/api/v1/media/' in clean_url and not ct.startswith('text/html'):
-                            body = _decode_response_body(record)
-                            if body:
-                                try:
-                                    structure = extract_data_from_api_v1_entry(
-                                        json.loads(body), _make_minimal_har_request(clean_url)
-                                    )
-                                    if structure:
-                                        structures.append(structure)
-                                except Exception as e:
-                                    print(f"[wacz] API v1 parse error for {clean_url}: {e}")
-
-                        elif ct.startswith('text/html'):
-                            body = _decode_response_body(record)
-                            if body:
-                                try:
-                                    structure = extract_data_from_html_entry(
-                                        body.decode('utf-8', errors='replace'),
-                                        _make_minimal_har_request(clean_url),
-                                    )
-                                    if structure:
-                                        structures.append(structure)
-                                except Exception as e:
-                                    print(f"[wacz] HTML parse error for {clean_url}: {e}")
-                    except Exception as e:
-                        print(f"[wacz] Structure processing error for {clean_url}: {e}")
-                        traceback.print_exc()
+                                entry = _make_har_entry(clean_url, ct, body.decode('utf-8', errors='replace'))
+                                structure = extract_structure_from_entry(entry)
+                                if structure:
+                                    structures.append(structure)
+                        except Exception as e:
+                            print(f"[wacz] Structure processing error for {clean_url}: {e}")
+                            traceback.print_exc()
 
                     # --- Video segments (.mp4 with video/mp4 content-type) ---
                     try:

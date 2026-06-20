@@ -15,7 +15,7 @@ import requests
 from pydantic import BaseModel, field_validator
 
 from archiver.summarizers import download_log as dl
-from extractors.models import VideoVersion
+from extractors.instagram.models import VideoVersion
 from extractors.structures_extraction import StructureType, structures_from_har
 
 
@@ -24,9 +24,10 @@ def _safe_id(identifier: str, max_len: int = 60) -> str:
     if len(identifier) <= max_len:
         return identifier
     return identifier[:max_len - 9] + '_' + md5(identifier.encode()).hexdigest()[:8]
-from extractors.structures_extraction_api_v1 import ApiV1Response
-from extractors.structures_extraction_graphql import GraphQLResponse
-from extractors.structures_extraction_html import PageResponse
+from extractors.instagram.structures_extraction_api_v1 import ApiV1Response
+from extractors.instagram.structures_extraction_graphql import GraphQLResponse
+from extractors.instagram.structures_extraction_html import PageResponse
+from extractors.threads.structures_extraction import ThreadsResponse
 from utils.integrity import FileIntegrity, protect_file, prune_orphan_sidecars
 
 OnLoggedMissingVideo = Literal["reassemble_from_har_only", "skip", "redownload"]
@@ -272,6 +273,11 @@ def _build_filename_xpv_map(structures: list[StructureType]) -> dict[str, str]:
                     _process(item.video_versions, getattr(item, 'video_dash_manifest', None), item.pk)
                     for ci in (item.carousel_media or []):
                         _process(ci.video_versions, getattr(ci, 'video_dash_manifest', None), ci.pk)
+        elif isinstance(s, ThreadsResponse):
+            for post in s.posts:
+                _process(post.video_versions, getattr(post, 'video_dash_manifest', None), post.pk)
+                for ci in (post.carousel_media or []):
+                    _process(ci.video_versions, getattr(ci, 'video_dash_manifest', None), ci.pk)
 
     return result
 
@@ -777,6 +783,12 @@ def extract_videos_from_structures(structures: list[StructureType]) -> list[Vide
                     if item.carousel_media:
                         for carousel_item in item.carousel_media:
                             _store(carousel_item.pk, carousel_item.video_versions, carousel_item)
+        elif isinstance(s, ThreadsResponse):
+            for post in s.posts:
+                _store(post.pk, post.video_versions, post)
+                if post.carousel_media:
+                    for carousel_item in post.carousel_media:
+                        _store(carousel_item.pk, carousel_item.video_versions, carousel_item)
 
     videos: dict[str, Video] = dict()
     for item_pk, (video_versions, dash_manifest, fallback_pk, cover_photo_url) in pk_video_versions_dict.items():

@@ -37,6 +37,7 @@ import sys
 import traceback
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import ijson
 
@@ -206,7 +207,7 @@ def resume_archive(archive_dir: Path) -> None:
     commit_id, branch = ensure_committed()
 
     print("Re-capturing TLS cert + public IP (POST-session — not session-time values).")
-    tls_cert = get_tls_cert_info("www.instagram.com")
+    tls_cert = get_tls_cert_info(urlparse(target_url).netloc or "www.instagram.com")
     my_ip = get_my_public_ip()
 
     recovery_note = (

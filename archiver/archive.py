@@ -235,17 +235,18 @@ def screen_record(output_path, stop_event, frame_hashes_path=None):
 
 
 def affidavit_from_metadata(metadata: ArchiveSessionMetadata) -> str:
-    affidavit = f"""I, {metadata.signature}, have archived the Instagram content from {metadata.target_url} using the profile '{metadata.profile_name}'.
+    target_host = urlparse(metadata.target_url).netloc or metadata.target_url
+    affidavit = f"""I, {metadata.signature}, have archived the content from {metadata.target_url} using the profile '{metadata.profile_name}'.
 The archiving process started at {metadata.archiving_start_timestamp} and was completed at {metadata.archiving_finished_timestamp} (timezone: {datetime.datetime.now().astimezone().tzname()}, UTC {datetime.datetime.now().astimezone().utcoffset()}).
 Archiving was carried out from the IP address {metadata.my_ip}, and was done through the use of a custom Python script.
 The script launches a Playwright-controlled Firefox browser ({metadata.browser_build_id}), which is used to navigate to the target URL, and allows the user to manually interact with the page (including scrolling, clicking, and navigating to other pages).
-The script records the screen during this process, and also saves a HAR file of the network traffic. The screen recording is saved as a video file. Server requests for video content from the Instagram servers during the sessions are identified through analysis of the HAR file, and the full media files are downloaded and saved to the archive directory (these tracks may include data that does not appear in the HAR, since it only includes byte-range segments which don't necessarily cover the entire duration of the video).
+The script records the screen during this process, and also saves a HAR file of the network traffic. The screen recording is saved as a video file. Server requests for video content from the content servers during the sessions are identified through analysis of the HAR file, and the full media files are downloaded and saved to the archive directory (these tracks may include data that does not appear in the HAR, since it only includes byte-range segments which don't necessarily cover the entire duration of the video).
 None of the HAR's content has been altered or modified in any way, and no third party has been granted access to the file system. The code used for this process is available on GitHub at https://github.com/yanivcogan/InstagramArchiver (branch {metadata.branch}, commit {metadata.commit_id})
 SHA-256 hash of the HAR file: {metadata.har_integrity.whole_file_hash if metadata.har_integrity else 'N/A'}
 SHA-256 hash of the screen recording: {metadata.video_integrity.whole_file_hash if metadata.video_integrity else 'N/A'}
 Each archived asset has a sidecar `<asset>.manifest.json` carrying its chunked-SHA-256 + PAR2 recovery metadata, and a sibling `<asset>.par2` recovery file (PAR2). A single archive-level `manifests.json` summary at the archive root commits to every per-asset manifest's SHA-256 and is OpenTimestamps-anchored at `manifests.json.ots` — that one timestamp transitively proves the existence of every chunk hash, whole-file hash, and PAR2 index hash in the archive at the time of sealing.
 At the time of archiving, the following domains were contacted and resolved to the following IP addresses: {metadata.domain_resolutions}
-The TLS certificate presented by www.instagram.com had SHA-256 fingerprint {metadata.tls_cert.fingerprint_sha256 if metadata.tls_cert else 'N/A'}, issued by {metadata.tls_cert.issuer if metadata.tls_cert else 'N/A'}, valid from {metadata.tls_cert.valid_from if metadata.tls_cert else 'N/A'} to {metadata.tls_cert.valid_to if metadata.tls_cert else 'N/A'}.
+The TLS certificate presented by {target_host} had SHA-256 fingerprint {metadata.tls_cert.fingerprint_sha256 if metadata.tls_cert else 'N/A'}, issued by {metadata.tls_cert.issuer if metadata.tls_cert else 'N/A'}, valid from {metadata.tls_cert.valid_from if metadata.tls_cert else 'N/A'} to {metadata.tls_cert.valid_to if metadata.tls_cert else 'N/A'}.
 OS and hardware details: {metadata.platform}
 Additional Notes: {metadata.notes}"""
     return affidavit
@@ -704,7 +705,7 @@ def finish_recording(recording_thread: Optional[threading.Thread], archive_dir: 
     return
 
 
-def archive_instagram_content(profile: Profile, target_url: str):
+def archive_content(profile: Profile, target_url: str):
     profiles_dir = Path(ROOT_DIR) / "archiver" / "profiles"
     profile_name = profile.name
     profile_path = profiles_dir / profile_name
@@ -719,7 +720,7 @@ def archive_instagram_content(profile: Profile, target_url: str):
     archive_dir = Path(ROOT_DIR) / "archives" / f"{profile_name}_{archiving_start_time.strftime('%Y%m%d_%H%M%S')}"
     archive_dir.mkdir(parents=True, exist_ok=True)
     my_public_ip = get_my_public_ip()
-    tls_cert = get_tls_cert_info("www.instagram.com")
+    tls_cert = get_tls_cert_info(urlparse(target_url).netloc or "www.instagram.com")
 
     with open(profile_path / "state.json", "r") as f:
         storage_state = json.load(f)
@@ -847,8 +848,13 @@ if __name__ == "__main__":
     ensure_ffmpeg_installed()
     ensure_par2_installed()
     selected_profile = select_profile()
-    url = input("Enter the Instagram URL to archive: ")
-    url = url.split("?igsh=")[0].strip().split("&igsh=")[0].strip()
+    url = input("Enter the URL to archive: ")
+    # Strip Meta share-sheet tracking params: Instagram's ?igsh=/&igsh= and
+    # Threads' ?xmt=/&xmt= equivalent.
+    url = url.strip()
+    for _sep in ("?igsh=", "&igsh=", "?xmt=", "&xmt="):
+        url = url.split(_sep)[0]
+    url = url.strip()
 
-    archive_instagram_content(selected_profile, url)
+    archive_content(selected_profile, url)
     sys.exit(0)
