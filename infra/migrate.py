@@ -121,14 +121,20 @@ def _parse_filename(path: Path) -> tuple[int, str] | None:
 
 
 def _strip_line_comments(sql: str) -> str:
-    """Drop full-line ``--`` comments so semicolons inside them can't split a
-    statement. Lines whose first non-whitespace characters are ``--`` are
-    removed entirely; everything else (including ``comment '...'`` clauses) is
-    left untouched."""
-    return "\n".join(
-        line for line in sql.splitlines()
-        if not line.lstrip().startswith("--")
-    )
+    """Strip ``--`` line comments before the statement splitter runs, so a
+    semicolon inside a comment can't terminate a statement early. A full line
+    whose first non-whitespace characters are ``--`` is dropped entirely; an
+    inline ``--`` (preceded by whitespace, matching MySQL's rule that ``--``
+    only begins a comment when followed by whitespace/control) truncates the
+    rest of its line. ``comment '...'`` clauses and ``--`` inside
+    identifiers/values are left untouched."""
+    out = []
+    for line in sql.splitlines():
+        if line.lstrip().startswith("--"):
+            continue  # full-line comment
+        idx = line.find(" --")
+        out.append(line[:idx] if idx >= 0 else line)
+    return "\n".join(out)
 
 
 def _apply_sql(cnx, path: Path):
