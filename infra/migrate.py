@@ -122,6 +122,13 @@ def _parse_filename(path: Path) -> tuple[int, str] | None:
 
 def _apply_sql(cnx, path: Path):
     sql = path.read_text(encoding="utf-8")
+    # Strip -- line comments before splitting so semicolons inside comments
+    # don't produce invalid statement fragments.
+    stripped_lines = []
+    for line in sql.splitlines():
+        idx = line.find("--")
+        stripped_lines.append(line[:idx] if idx >= 0 else line)
+    sql = "\n".join(stripped_lines)
     cur = cnx.cursor()
     try:
         for stmt in sql.split(";"):

@@ -1,5 +1,9 @@
 # Evidence Platform
 
+**SEE ALSO create_webserver_exoscale.sh for good useful stuff**
+
+
+
 ## Development Setup
 
 ### Prerequisites
@@ -99,7 +103,7 @@ The frontend will be accessible at `http://localhost:3000` and will communicate 
 
 #### Migrations
 
-
+uv run infra/migrate.py
 
 ---
 
@@ -109,9 +113,9 @@ The frontend will be accessible at `http://localhost:3000` and will communicate 
 
 #### 1. Backup Database
 ```bash
-# On production server
+# On production server (see secrets create_webserver_exoscale.sh)
 # 10mins
-mysqldump -u golf -pSEESECRETSBUILDWEBSERVER evidenceplatform > evidenceplatform_backup_$(date +%Y%m%d_%H%M%S).sql
+mysqldump --no-tablespaces -u golf -pSEESECRETSBUILDWEBSERVER evidenceplatform > evidenceplatform_backup_$(date +%Y%m%d_%H%M%S).sql
 ```
 
 #### 2. Backup Files and Archives
@@ -238,6 +242,8 @@ uv run infra/migrate.py --one-at-a-time
 
 ## Exoscale
 
+see secrets/create_webserver_exoscale.sh
+
 ```bash
 # dump prod on Azure
  mysqldump -u golf -ppassword5 evidenceplatform > evidenceplatform_backup_$(date +%Y%m%d_%H%M%S).sql
@@ -291,3 +297,41 @@ UPDATE archive_session SET incorporation_status = 'pending' WHERE incorporation_
 
 ```
 
+## YANIV UPDATES
+
+check local works
+```bash
+cd code/evidenceplatform
+uv sync --upgrade
+BROWSING_PLATFORM_DEV=1 uv run python browsing_platform/server/server.py
+```
+This starts the API server on port **4444**.
+
+#### 2. Start the React Frontend
+In a separate terminal:
+```bash
+cd browsing_platform/client
+pnpm update # TODO - there are dependency mismatches
+pnpm start
+
+# davemateer@gmail.com
+# letmeinletmein is my dev password
+# 2FA is just the bottom one for evidenceplatform
+```
+
+merge in from his upstream
+
+```bash
+# 20GB
+cd ~/code/
+mysqldump -u charlie -ppassword evidenceplatform > evidenceplatform_backup_$(date +%Y%m%d_%H%M%S).sql
+
+uv run infra/migrate.py
+
+```
+
+## PROD
+
+```bash
+mysqldump --no-tablespaces -u golf -ppassword5 evidenceplatform > evidenceplatform_backup_$(date +%Y%m%d_%H%M%S).sql
+```

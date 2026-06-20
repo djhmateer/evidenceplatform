@@ -182,6 +182,8 @@ def run(cnx):
                     "  AND (bio IS NULL OR bio = '')",
                     (bio, session_id, id_on_platform),
                 )
+                if cur.rowcount:
+                    print(f"      session {session_id}: set bio for id_on_platform={id_on_platform} ({cur.rowcount} row(s)) [pending commit]")
                 archive_updates += cur.rowcount
             for url_suffix, bio in bios_by_suffix.items():
                 cur.execute(
@@ -190,6 +192,8 @@ def run(cnx):
                     "  AND (bio IS NULL OR bio = '')",
                     (bio, session_id, url_suffix),
                 )
+                if cur.rowcount:
+                    print(f"      session {session_id}: set bio for url_suffix={url_suffix} ({cur.rowcount} row(s)) [pending commit]")
                 archive_updates += cur.rowcount
 
             parsed_sessions += 1
