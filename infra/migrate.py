@@ -120,8 +120,19 @@ def _parse_filename(path: Path) -> tuple[int, str] | None:
         return None
 
 
+def _strip_line_comments(sql: str) -> str:
+    """Drop full-line ``--`` comments so semicolons inside them can't split a
+    statement. Lines whose first non-whitespace characters are ``--`` are
+    removed entirely; everything else (including ``comment '...'`` clauses) is
+    left untouched."""
+    return "\n".join(
+        line for line in sql.splitlines()
+        if not line.lstrip().startswith("--")
+    )
+
+
 def _apply_sql(cnx, path: Path):
-    sql = path.read_text(encoding="utf-8")
+    sql = _strip_line_comments(path.read_text(encoding="utf-8"))
     cur = cnx.cursor()
     try:
         for stmt in sql.split(";"):
