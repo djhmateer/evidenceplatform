@@ -114,7 +114,11 @@ class ArchiveSessionMetadata(BaseModel):
     har_integrity: Optional[FileIntegrity] = None
     video_integrity: Optional[FileIntegrity] = None
     domain_resolutions: Optional[dict] = None
-    tls_cert: Optional[TLSCertInfo] = None
+    # host -> certificate presented by that host. Captured for every HTTPS domain
+    # contacted during the session (see domain_resolutions), not just the landing
+    # page — so the affidavit documents the cert chain of every server content was
+    # actually fetched from, and is platform-agnostic by construction.
+    tls_certs: Optional[dict[str, TLSCertInfo]] = None
     browser_build_id: Optional[str] = None
     commit_id: Optional[str] = None
     branch: Optional[str] = None
@@ -141,6 +145,22 @@ def get_tls_cert_info(hostname: str) -> Optional[TLSCertInfo]:
     except Exception as e:
         print(f"TLS certificate capture failed for {hostname}: {e}")
         return None
+
+
+def get_tls_certs_for_domains(domain_resolutions: Optional[dict]) -> dict:
+    """Capture the TLS certificate presented by each domain contacted during the
+    session — the hosts already enumerated in ``domain_resolutions``. This records
+    the certificate of every server content was actually fetched from rather than a
+    single user-supplied landing host (which may not even be among the contacted
+    domains), and works identically regardless of platform. Hosts that do not
+    complete a TLS handshake (non-HTTPS, unreachable, failed DNS) are omitted."""
+    certs: dict[str, TLSCertInfo] = {}
+    for hostname in sorted((domain_resolutions or {}).keys()):
+        cert = get_tls_cert_info(hostname)
+        if cert is not None:
+            certs[hostname] = cert
+    print(f"Captured TLS certificates for {len(certs)} domain(s).")
+    return certs
 
 
 def resolve_har_domains(har_path: Path) -> dict:
@@ -235,7 +255,18 @@ def screen_record(output_path, stop_event, frame_hashes_path=None):
 
 
 def affidavit_from_metadata(metadata: ArchiveSessionMetadata) -> str:
-    target_host = urlparse(metadata.target_url).netloc or metadata.target_url
+    if metadata.tls_certs:
+        cert_lines = "\n".join(
+            f"  - {host}: SHA-256 fingerprint {c.fingerprint_sha256}, issued by {c.issuer}, "
+            f"valid from {c.valid_from} to {c.valid_to}."
+            for host, c in metadata.tls_certs.items()
+        )
+        tls_block = (
+            "At the time of sealing, the following domains presented these TLS certificates:\n"
+            + cert_lines
+        )
+    else:
+        tls_block = "No TLS certificate information was captured for the contacted domains."
     affidavit = f"""I, {metadata.signature}, have archived the content from {metadata.target_url} using the profile '{metadata.profile_name}'.
 The archiving process started at {metadata.archiving_start_timestamp} and was completed at {metadata.archiving_finished_timestamp} (timezone: {datetime.datetime.now().astimezone().tzname()}, UTC {datetime.datetime.now().astimezone().utcoffset()}).
 Archiving was carried out from the IP address {metadata.my_ip}, and was done through the use of a custom Python script.
@@ -246,7 +277,7 @@ SHA-256 hash of the HAR file: {metadata.har_integrity.whole_file_hash if metadat
 SHA-256 hash of the screen recording: {metadata.video_integrity.whole_file_hash if metadata.video_integrity else 'N/A'}
 Each archived asset has a sidecar `<asset>.manifest.json` carrying its chunked-SHA-256 + PAR2 recovery metadata, and a sibling `<asset>.par2` recovery file (PAR2). A single archive-level `manifests.json` summary at the archive root commits to every per-asset manifest's SHA-256 and is OpenTimestamps-anchored at `manifests.json.ots` — that one timestamp transitively proves the existence of every chunk hash, whole-file hash, and PAR2 index hash in the archive at the time of sealing.
 At the time of archiving, the following domains were contacted and resolved to the following IP addresses: {metadata.domain_resolutions}
-The TLS certificate presented by {target_host} had SHA-256 fingerprint {metadata.tls_cert.fingerprint_sha256 if metadata.tls_cert else 'N/A'}, issued by {metadata.tls_cert.issuer if metadata.tls_cert else 'N/A'}, valid from {metadata.tls_cert.valid_from if metadata.tls_cert else 'N/A'} to {metadata.tls_cert.valid_to if metadata.tls_cert else 'N/A'}.
+{tls_block}
 OS and hardware details: {metadata.platform}
 Additional Notes: {metadata.notes}"""
     return affidavit
@@ -627,8 +658,11 @@ def finish_recording(recording_thread: Optional[threading.Thread], archive_dir: 
             traceback.print_exc()
             print(f"❌ HAR merge failed, proceeding with unmerged HAR: {e}")
 
-        # Resolve all domains contacted during the session
+        # Resolve all domains contacted during the session, then capture the TLS
+        # certificate each of them presented (platform-agnostic; covers every server
+        # content was fetched from, not just the landing page).
         metadata.domain_resolutions = resolve_har_domains(metadata.har_archive)
+        metadata.tls_certs = get_tls_certs_for_domains(metadata.domain_resolutions)
 
         metadata.archiving_finished_timestamp = datetime.datetime.now().isoformat()
 
@@ -720,7 +754,6 @@ def archive_content(profile: Profile, target_url: str):
     archive_dir = Path(ROOT_DIR) / "archives" / f"{profile_name}_{archiving_start_time.strftime('%Y%m%d_%H%M%S')}"
     archive_dir.mkdir(parents=True, exist_ok=True)
     my_public_ip = get_my_public_ip()
-    tls_cert = get_tls_cert_info(urlparse(target_url).netloc or "www.instagram.com")
 
     with open(profile_path / "state.json", "r") as f:
         storage_state = json.load(f)
@@ -739,7 +772,8 @@ def archive_content(profile: Profile, target_url: str):
         har_archive=archive_dir / "har_workspace" / "archive.har",
         my_ip=my_public_ip,
         platform=get_system_info(),
-        tls_cert=tls_cert,
+        # tls_certs is populated post-session in finish_recording, once the set of
+        # contacted domains is known from the HAR.
     )
 
     try:

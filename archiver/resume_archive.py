@@ -37,7 +37,6 @@ import sys
 import traceback
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse
 
 import ijson
 
@@ -46,7 +45,7 @@ from archiver.archive import (
     StorageConfig,
     affidavit_from_metadata,
     get_storage_config,
-    get_tls_cert_info,
+    get_tls_certs_for_domains,
     merge_har_attachments,
     resolve_har_domains,
 )
@@ -206,13 +205,12 @@ def resume_archive(archive_dir: Path) -> None:
 
     commit_id, branch = ensure_committed()
 
-    print("Re-capturing TLS cert + public IP (POST-session — not session-time values).")
-    tls_cert = get_tls_cert_info(urlparse(target_url).netloc or "www.instagram.com")
+    print("Re-capturing public IP (POST-session — not session-time value).")
     my_ip = get_my_public_ip()
 
     recovery_note = (
         "Archive recovered post-crash via archiver/resume_archive.py. "
-        "TLS cert and public IP shown here were captured at recovery time, "
+        "TLS certs and public IP shown here were captured at recovery time, "
         "not during the original recording."
     )
     notes_combined = (
@@ -232,15 +230,15 @@ def resume_archive(archive_dir: Path) -> None:
         har_archive=har_path,
         my_ip=my_ip,
         platform=get_system_info(),
-        tls_cert=tls_cert,
         browser_build_id=browser_build_id,
         signature=storage_config.signature,
         notes=notes_combined,
         video_integrity=load_video_integrity(archive_dir),
     )
 
-    print("Resolving HAR domains...")
+    print("Resolving HAR domains + capturing their TLS certificates...")
     metadata.domain_resolutions = resolve_har_domains(har_path)
+    metadata.tls_certs = get_tls_certs_for_domains(metadata.domain_resolutions)
     metadata.archiving_finished_timestamp = datetime.datetime.now().isoformat()
 
     print("Protecting HAR (chunked hash + PAR2 + OTS)...")
