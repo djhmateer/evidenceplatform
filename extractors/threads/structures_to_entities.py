@@ -86,24 +86,32 @@ def threads_post_to_entities(post: ThreadsPost) -> ExtractedEntitiesFlattened:
     )
     extracted_posts.append(post_entity)
 
+    # Only emit a top-level Media when the post itself carries an asset. Threads
+    # has an abundance of text-only posts and replies (and carousel parents, whose
+    # media lives in carousel_media below) that have no image/video of their own —
+    # emitting a Media for them would create identity-less junk rows, since media
+    # identity is url_suffix (the CDN filename), which would be NULL here.
     asset_url = _asset_url_from_item(post)
-    extracted_media.append(Media(
-        id_on_platform=post.id,
-        url_suffix=canonical_cdn_url(asset_url) if asset_url else None,
-        post_id_on_platform=post_entity.id_on_platform,
-        post_url_suffix=post_entity.url_suffix,
-        local_url=None,
-        media_type="video" if _is_video(post) else "image",
-        data=post.model_dump(exclude={'carousel_media'}),
-        platform="threads",
-    ))
+    if asset_url:
+        extracted_media.append(Media(
+            id_on_platform=post.id,
+            url_suffix=canonical_cdn_url(asset_url),
+            post_id_on_platform=post_entity.id_on_platform,
+            post_url_suffix=post_entity.url_suffix,
+            local_url=None,
+            media_type="video" if _is_video(post) else "image",
+            data=post.model_dump(exclude={'carousel_media'}),
+            platform="threads",
+        ))
 
     if post.carousel_media:
         for media_item in post.carousel_media:
             carousel_url = _asset_url_from_item(media_item)
+            if not carousel_url:
+                continue
             extracted_media.append(Media(
                 id_on_platform=media_item.id,
-                url_suffix=canonical_cdn_url(carousel_url) if carousel_url else None,
+                url_suffix=canonical_cdn_url(carousel_url),
                 post_id_on_platform=post_entity.id_on_platform,
                 post_url_suffix=post_entity.url_suffix,
                 local_url=None,
