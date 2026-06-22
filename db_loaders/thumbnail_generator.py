@@ -208,10 +208,14 @@ async def process_one_media(
             logger.error(f"Error generating thumbnail for media ID {media.id} (type={media.media_type}, path={local_path}): {e}")
             if emit:
                 emit(f"Part D — error generating thumbnail for media {media.id}: {e}")
-            db.execute_query(
-                "UPDATE media SET thumbnail_path = %(p)s, thumbnail_status = 'error' WHERE id = %(id)s",
-                {"p": f"error: {str(e)}", "id": media.id}, "none"
-            )
+            try:
+                error_msg = f"error: {str(e)}"[:200]
+                db.execute_query(
+                    "UPDATE media SET thumbnail_path = %(p)s, thumbnail_status = 'error' WHERE id = %(id)s",
+                    {"p": error_msg, "id": media.id}, "none"
+                )
+            except Exception as db_err:
+                logger.error(f"Failed to persist error status for media {media.id}: {db_err}")
             return False
 
         aspect_ratio = img.width / img.height if img.height > 0 else None
@@ -243,10 +247,14 @@ async def generate_missing_thumbnails(thumbnail_size=(128, 128), limit: int | No
         if not rows:
             break
 
-        results = await asyncio.gather(*[
-            process_one_media(row, thumbnail_size, semaphore, emit) for row in rows
-        ])
-        generated_count += sum(1 for r in results if r)
+        results = await asyncio.gather(
+            *[process_one_media(row, thumbnail_size, semaphore, emit) for row in rows],
+            return_exceptions=True,
+        )
+        for r in results:
+            if isinstance(r, Exception):
+                logger.error(f"Unhandled exception in process_one_media: {r}")
+        generated_count += sum(1 for r in results if r is True)
 
         if len(rows) < fetch_count:
             # Received fewer rows than requested — no more pending items remain

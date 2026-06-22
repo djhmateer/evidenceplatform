@@ -487,6 +487,9 @@ def add_hierarchy_ignore_duplicate(super_tag_id: int, sub_tag_id: int) -> str:
 # ── Related Account Tag Stats ─────────────────────────────────────────────────
 
 def get_related_account_tag_stats(account_id: int) -> list[ITagStat]:
+    # 'suggested' relations are excluded, mirroring the default weight of 0.0 they
+    # carry in browsing_platform/server/services/community.py.
+    from browsing_platform.server.services.community import SUGGESTED_RELATION_TYPE
     rows = db.execute_query(
         """SELECT t.id AS tag_id, t.name AS tag_name, tt.name AS tag_type_name,
                   COUNT(DISTINCT related.account_id) AS count
@@ -494,9 +497,11 @@ def get_related_account_tag_stats(account_id: int) -> list[ITagStat]:
                -- follow: the account is followed / follows
                SELECT DISTINCT follower_account_id AS account_id
                FROM account_relation WHERE followed_account_id = %(id)s
+                 AND (relation_type IS NULL OR relation_type != %(suggested_type)s)
                UNION
                SELECT DISTINCT followed_account_id
                FROM account_relation WHERE follower_account_id = %(id)s
+                 AND (relation_type IS NULL OR relation_type != %(suggested_type)s)
                UNION
                -- comment: someone commented on the account's post
                SELECT DISTINCT c.account_id
@@ -544,7 +549,7 @@ def get_related_account_tag_stats(account_id: int) -> list[ITagStat]:
            GROUP BY t.id, t.name, tt.name
            ORDER BY count DESC
            LIMIT 20""",
-        {"id": account_id},
+        {"id": account_id, "suggested_type": SUGGESTED_RELATION_TYPE},
         return_type="rows"
     )
     return [ITagStat(**row) for row in rows]

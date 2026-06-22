@@ -529,7 +529,11 @@ def incorporate_structures_into_db(
                 if is_reprocessing:
                     # This session's archive record already existed from a prior run — our update
                     # replaced its old contribution, so re-derive the canonical from all sessions.
-                    all_archives = all_archives_by_canonical.get(existing_canonical_id, [])
+                    # all_archives_by_canonical was fetched before this loop, so it holds a stale
+                    # snapshot of the current session's record. Replace it with merged_archive_record
+                    # (what we just persisted) so the canonical synthesis reflects the latest data.
+                    all_archives = [merged_archive_record if a.id == prior_run_archive_id else a
+                                    for a in all_archives_by_canonical.get(existing_canonical_id, [])]
                     updated_canonical = synthesize_from_archives(all_archives, entity_config.merge)
                 else:
                     # First time for this session: canonical already embodies all prior sessions.
