@@ -51,6 +51,13 @@ class Video(BaseModel):
     full_asset: Optional[str] = None
     cover_photo_url: Optional[str] = None
     local_files: Optional[list[Path]] = None
+    # True when a .mp4 request for this asset appears in the HAR, even if the
+    # response body wasn't captured. fetched_tracks alone can't carry this:
+    # Threads streams video as open-ended bytes=0- responses consumed by the
+    # media pipeline, so a watched video has a request in the HAR but no track.
+    # Used to distinguish "viewed but body uncaptured" from genuinely unfetched
+    # media (a post that was never opened).
+    requested_in_session: bool = False
 
     @field_validator('xpv_asset_id', mode='before')
     @classmethod
@@ -122,12 +129,57 @@ def _parse_byte_range(url: str) -> tuple[Optional[int], Optional[int]]:
     return start, end
 
 
+def _parse_content_range(value: Optional[str]) -> tuple[Optional[int], Optional[int]]:
+    """Parse a response ``Content-Range`` header (e.g. ``bytes 10334554-16803910/16803911``)
+    into an inclusive (start, end), or (None, None)."""
+    if not value:
+        return None, None
+    m = re.search(r'bytes\s+(\d+)-(\d+)', value)
+    return (int(m.group(1)), int(m.group(2))) if m else (None, None)
+
+
+def _parse_range_header(value: Optional[str]) -> tuple[Optional[int], Optional[int]]:
+    """Parse a request ``Range`` header (e.g. ``bytes=10334554-`` or ``bytes=0-1023``)
+    into an inclusive (start, end); end is None for an open-ended range."""
+    if not value:
+        return None, None
+    m = re.search(r'bytes=(\d+)-(\d*)', value)
+    if not m:
+        return None, None
+    return int(m.group(1)), (int(m.group(2)) if m.group(2) else None)
+
+
+def _header_value(headers: list, name: str) -> Optional[str]:
+    name = name.lower()
+    for h in headers or []:
+        if h.get('name', '').lower() == name:
+            return h.get('value')
+    return None
+
+
+def byte_range_from_har_entry(entry: dict) -> tuple[Optional[int], Optional[int]]:
+    """Recover a media segment's byte offset from a HAR entry's HTTP headers.
+
+    Instagram encodes the range in the URL (``bytestart``/``byteend``), but
+    Threads/Barcelona uses standard HTTP ranged requests: the offset lives in the
+    response ``Content-Range`` (authoritative — it states exactly which bytes the
+    body covers) and, failing that, the request ``Range`` header. Without this the
+    body of a tail request (e.g. ``bytes 10334554-…``) would be misfiled at offset
+    0, corrupting the reassembled file.
+    """
+    cr = _parse_content_range(_header_value(entry.get('response', {}).get('headers', []), 'content-range'))
+    if cr[0] is not None:
+        return cr
+    return _parse_range_header(_header_value(entry.get('request', {}).get('headers', []), 'range'))
+
+
 def accumulate_video_segment(
     url: str,
     body: bytes,
     real_xpv_dict: dict[str, Video],
     fallback_dict: dict[str, Video],
     filename_to_xpv: dict[str, str],
+    byte_range: Optional[tuple[Optional[int], Optional[int]]] = None,
 ) -> None:
     """
     Process one .mp4 URL+body and route it into the appropriate accumulation dict.
@@ -141,6 +193,11 @@ def accumulate_video_segment(
     content-addressed and identical across video_versions URLs and DASH manifest
     BaseURLs for the same video, making it a reliable reconciliation anchor.
 
+    The segment's byte offset comes from the URL (``bytestart``/``byteend``, the
+    Instagram convention); when absent there, callers pass ``byte_range`` recovered
+    from the HTTP ``Content-Range``/``Range`` headers (the Threads convention) so
+    tail ranges land at the correct offset instead of being misfiled at byte 0.
+
     Call reconcile_video_dicts() after all entries have been accumulated to resolve
     fallback entries using structure DASH manifests (cascade steps 2-3).
     """
@@ -150,6 +207,8 @@ def accumulate_video_segment(
         return
     full_url = _normalize_mp4_url(url)
     start, end = _parse_byte_range(url)
+    if start is None and end is None and byte_range is not None:
+        start, end = byte_range
     xpv_asset_id = extract_xpv_asset_id(url)
 
     if xpv_asset_id:
@@ -308,19 +367,14 @@ def reconcile_video_dicts(
     # Step 2: enrich filename_to_xpv from ALL video_versions filenames in structures
     if structures:
         struct_map = _build_filename_xpv_map(structures)
-        print(f"[reconcile] step2: structure filename→xpv map has {len(struct_map)} entries")
         for fn, xpv in struct_map.items():
             if fn not in filename_to_xpv:
                 filename_to_xpv[fn] = xpv
-
-    print(f"[reconcile] fallback_dict keys: {list(fallback_dict.keys())}")
-    print(f"[reconcile] filename_to_xpv keys: {list(filename_to_xpv.keys())}")
 
     # Step 3: resolve and merge fallback entries
     for fn, video in fallback_dict.items():
         real_xpv = filename_to_xpv.get(fn)
         if real_xpv:
-            print(f"[reconcile] resolved fallback '{fn[:20]}...' → '{real_xpv}'")
             if real_xpv in real_xpv_dict:
                 existing_tracks = real_xpv_dict[real_xpv].fetched_tracks
                 if existing_tracks is not None:
@@ -330,7 +384,6 @@ def reconcile_video_dicts(
             else:
                 real_xpv_dict[real_xpv] = video.model_copy(update={'xpv_asset_id': real_xpv})
         else:
-            print(f"[reconcile] UNRESOLVED fallback '{fn[:20]}...' — keeping as filename key")
             real_xpv_dict[fn] = video  # unresolved — keep as filename-keyed, data not lost
 
     return real_xpv_dict
@@ -355,7 +408,8 @@ def extract_video_maps(har_path: Path) -> list[Video]:
                 if '.mp4' in entry['request']['url'] and 'text' in entry['response']['content']:
                     url = entry['request']['url']
                     body = base64.b64decode(entry['response']['content']['text'])
-                    accumulate_video_segment(url, body, real_xpv_dict, fallback_dict, filename_to_xpv)
+                    accumulate_video_segment(url, body, real_xpv_dict, fallback_dict, filename_to_xpv,
+                                             byte_range=byte_range_from_har_entry(entry))
             except Exception as e:
                 print(f'Error processing entry: {e}')
                 traceback.print_exc()
@@ -882,6 +936,24 @@ class VideoAcquisitionConfig(BaseModel):
     on_logged_missing: OnLoggedMissingVideo = "reassemble_from_har_only"
 
 
+def _requested_xpvs_from_urls(urls, struct_filename_to_xpv: dict[str, str]) -> set[str]:
+    """Resolve an iterable of requested .mp4 URLs to the set of canonical
+    xpv_asset_ids they refer to, keyed the same way the accumulation path keys
+    videos (filename->xpv table first, then the URL's own efg/md5 id). Used to
+    flag videos as requested-in-session even when no response body was captured."""
+    requested: set[str] = set()
+    for url in urls:
+        if not isinstance(url, str) or '.mp4' not in url:
+            continue
+        fn = url.split('.mp4')[0].split('/')[-1]
+        if fn:
+            requested.add(struct_filename_to_xpv.get(fn, fn))
+        xpv = extract_xpv_asset_id(url)
+        if xpv:
+            requested.add(xpv)
+    return requested
+
+
 def acquire_videos(
         har_path: Path,
         output_dir: Path = Path('../temp_video_segments'),
@@ -889,6 +961,7 @@ def acquire_videos(
         config: VideoAcquisitionConfig = VideoAcquisitionConfig(),
         har_video_maps: Optional[list['Video']] = None,
         download_log: Optional['dl.DownloadLog'] = None,
+        requested_mp4_urls: Optional[set[str]] = None,
 ) -> list[Video]:
     # unpack the config
     download_missing = config.download_missing
@@ -936,17 +1009,35 @@ def acquire_videos(
             else:
                 combined_videos_dict[real_xpv] = fn_video.model_copy(update={'xpv_asset_id': real_xpv})
 
-    print(f"[acquire] HAR video keys after re-keying: {list(combined_videos_dict.keys())}")
-    print(f"[acquire] structure video keys: {[sv.xpv_asset_id for sv in structures_videos]}")
     for video in structures_videos:
         if video.xpv_asset_id in combined_videos_dict:
             combined_videos_dict[video.xpv_asset_id].full_asset = video.full_asset
-            print(f"[acquire] joined structure+HAR for xpv '{video.xpv_asset_id}'")
         else:
             combined_videos_dict[video.xpv_asset_id] = video
-            print(f"[acquire] structure-only video xpv '{video.xpv_asset_id}' (no HAR match)")
 
     combined_videos = list(combined_videos_dict.values())
+
+    # Mark which videos were actually requested during the session — even when no
+    # response body was captured. A Threads video the operator watched produces a
+    # bytes=0- request in the HAR but no fetched_track (the media pipeline consumes
+    # the body), so fetched_tracks alone would wrongly classify it as "unfetched"
+    # and skip its CDN re-acquisition. The set of requested .mp4 URLs is normally
+    # collected by the caller during its single HAR pass (requested_mp4_urls); only
+    # when a caller didn't supply it do we fall back to a cheap URL-only scan here.
+    if requested_mp4_urls is None:
+        requested_mp4_urls = set()
+        try:
+            with open(har_path, 'rb') as f:
+                for url in ijson.items(f, 'log.entries.item.request.url'):
+                    if isinstance(url, str) and '.mp4' in url:
+                        requested_mp4_urls.add(url)
+        except Exception as e:
+            print(f"[acquire] requested-asset scan failed (treating none as requested): {e}")
+    requested_xpv = _requested_xpvs_from_urls(requested_mp4_urls, struct_filename_to_xpv)
+    for video in combined_videos:
+        if video.xpv_asset_id in requested_xpv:
+            video.requested_in_session = True
+
     # attach existing local files to the videos
     for video in combined_videos:
         safe_xpv = _safe_id(video.xpv_asset_id)
@@ -1007,13 +1098,13 @@ def acquire_videos(
         # User previously curated this asset away (file missing + in log).
         # Apply the configured policy.
         if logged and on_logged_missing == "skip":
-            print(f"[log] Video {video.xpv_asset_id} is in the download log but missing on disk — skipping per on_logged_missing=skip.")
+            print(f"[log] Video {video.xpv_asset_id} is in the download log but missing on disk -- skipping per on_logged_missing=skip.")
             continue
         if logged and on_logged_missing == "reassemble_from_har_only":
             if not video.fetched_tracks:
-                print(f"[log] Video {video.xpv_asset_id} is in the log but missing and no HAR segments available — skipping (no CDN fetch under reassemble_from_har_only).")
+                print(f"[log] Video {video.xpv_asset_id} is in the log but missing and no HAR segments available -- skipping (no CDN fetch under reassemble_from_har_only).")
                 continue
-            print(f"[log] Video {video.xpv_asset_id} is in the log but missing — reassembling from HAR segments only (no CDN fetch).")
+            print(f"[log] Video {video.xpv_asset_id} is in the log but missing -- reassembling from HAR segments only (no CDN fetch).")
             download_result = save_fetched_asset(
                 video,
                 output_dir,
@@ -1035,7 +1126,8 @@ def acquire_videos(
         download_result = AssetSaveResult(success=False)
         skip_video = (
             (not download_media_not_in_structures and not video.full_asset) or
-            (not download_unfetched_media and not video.fetched_tracks)
+            (not download_unfetched_media and not video.fetched_tracks
+             and not video.requested_in_session)
         )
         if skip_video:
             continue

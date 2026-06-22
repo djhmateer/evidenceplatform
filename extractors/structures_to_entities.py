@@ -23,7 +23,7 @@ from extractors.entity_types import Account, Post, Media, \
 from extractors.extract_photos import acquire_photos, PhotoAcquisitionConfig, Photo, \
     _is_image_request, extract_xpv_asset_id as _extract_photo_asset_id
 from extractors.extract_videos import acquire_videos, VideoAcquisitionConfig, Video, \
-    accumulate_video_segment, reconcile_video_dicts
+    accumulate_video_segment, reconcile_video_dicts, byte_range_from_har_entry
 from extractors.extraction_helpers import canonical_cdn_url, extend_flattened_entities
 from extractors.reconcile_entities import reconcile_accounts, reconcile_posts, reconcile_media
 from extractors.structures_extraction import StructureType, extract_structure_from_entry
@@ -41,12 +41,14 @@ class ExtractedHarData(BaseModel):
     photos: list[Photo]
 
 
-def _scan_har_once(har_path: Path) -> tuple[list[StructureType], list[Video], list[Photo]]:
+def _scan_har_once(har_path: Path) -> tuple[list[StructureType], list[Video], list[Photo], set[str]]:
     """
     Single streaming pass over a HAR file that simultaneously extracts:
     - structures (GraphQL / API v1 / HTML responses)
     - video segment maps (.mp4 entries)
     - photo maps (image entries)
+    - the set of every requested .mp4 URL (incl. bodyless ones), so acquire_videos
+      can flag requested-in-session videos without a second HAR pass
 
     Replaces three separate ijson passes with one, roughly tripling parse speed.
     """
@@ -55,12 +57,16 @@ def _scan_har_once(har_path: Path) -> tuple[list[StructureType], list[Video], li
     fallback_dict: dict[str, Video] = {}
     filename_to_xpv: dict[str, str] = {}
     photos_dict: dict = {}  # keys are str (filename) or int (hash fallback)
+    requested_mp4_urls: set[str] = set()
 
     with open(har_path, 'rb') as f:
         for entry in ijson.items(f, 'log.entries.item'):
             url: str = entry['request']['url']
             content: dict = entry['response']['content']
             mime: str = content.get('mimeType', '')
+
+            if '.mp4' in url:
+                requested_mp4_urls.add(url)
 
             # --- Structures (host-routed: Instagram, Threads, ...) ---
             try:
@@ -75,7 +81,8 @@ def _scan_har_once(har_path: Path) -> tuple[list[StructureType], list[Video], li
             try:
                 if '.mp4' in url and 'text' in content:
                     body = base64.b64decode(content['text'])
-                    accumulate_video_segment(url, body, real_xpv_dict, fallback_dict, filename_to_xpv)
+                    accumulate_video_segment(url, body, real_xpv_dict, fallback_dict, filename_to_xpv,
+                                             byte_range=byte_range_from_har_entry(entry))
             except Exception as e:
                 print(f"Error processing video entry: {e}")
                 traceback.print_exc()
@@ -97,7 +104,7 @@ def _scan_har_once(har_path: Path) -> tuple[list[StructureType], list[Video], li
                 pass
 
     reconcile_video_dicts(real_xpv_dict, fallback_dict, filename_to_xpv, structures=structures)
-    return structures, list(real_xpv_dict.values()), list(photos_dict.values())
+    return structures, list(real_xpv_dict.values()), list(photos_dict.values()), requested_mp4_urls
 
 
 def extract_data_from_har(
@@ -113,7 +120,7 @@ def extract_data_from_har(
 ) -> ExtractedHarData:
     archive_dir = har_path.parent
 
-    structures, har_video_maps, har_photo_maps = _scan_har_once(har_path)
+    structures, har_video_maps, har_photo_maps, requested_mp4_urls = _scan_har_once(har_path)
 
     # downloaded_media_log.json carries acquisition history across re-extraction
     # runs. Pass the live object into both acquire_* calls so they can both
@@ -127,6 +134,7 @@ def extract_data_from_har(
         config=video_acquisition_config,
         har_video_maps=har_video_maps,
         download_log=download_log,
+        requested_mp4_urls=requested_mp4_urls,
     )
 
     photos = acquire_photos(

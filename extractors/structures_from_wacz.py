@@ -10,7 +10,7 @@ from warcio.archiveiterator import ArchiveIterator
 from extractors.extract_photos import Photo, extract_xpv_asset_id as _extract_photo_asset_id
 from extractors.extract_videos import (
     Video, save_fetched_asset,
-    accumulate_video_segment, reconcile_video_dicts,
+    accumulate_video_segment, reconcile_video_dicts, _parse_content_range,
 )
 from extractors.structures_extraction import StructureType, extract_structure_from_entry
 
@@ -54,7 +54,8 @@ def scan_wacz(wacz_path: Path, output_dir: Path) -> tuple[list[StructureType], l
     Video segments are assembled and saved to output_dir/videos/.
     Photos are saved to output_dir/photos/.
 
-    Returns (structures, videos, photos) — same types as _scan_har_once() in structures_to_entities.py.
+    Returns (structures, videos, photos), mirroring the structure/video/photo
+    outputs of _scan_har_once() in structures_to_entities.py.
     """
     structures: list[StructureType] = []
     real_xpv_dict: dict[str, Video] = {}
@@ -120,8 +121,15 @@ def scan_wacz(wacz_path: Path, output_dir: Path) -> tuple[list[StructureType], l
                         if '.mp4' in url and ct.startswith('video/'):
                             body = _decode_response_body(record)
                             if body:
+                                # Threads/Barcelona uses ranged HTTP requests; the
+                                # response Content-Range states which bytes this body
+                                # covers (Instagram instead puts it in the URL).
+                                br = _parse_content_range(
+                                    record.http_headers.get_header('Content-Range')
+                                )
                                 accumulate_video_segment(
-                                    url, body, real_xpv_dict, fallback_dict, filename_to_xpv
+                                    url, body, real_xpv_dict, fallback_dict, filename_to_xpv,
+                                    byte_range=br,
                                 )
                     except Exception as e:
                         print(f"[wacz] Video segment error for {url}: {e}")

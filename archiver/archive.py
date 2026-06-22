@@ -7,6 +7,7 @@ import os
 import shutil
 import socket
 import ssl
+import _ssl  # backing C-extension; exposes ENCODING_DER/PEM for Certificate.public_bytes
 import subprocess
 import sys
 import threading
@@ -98,6 +99,12 @@ class TLSCertInfo(BaseModel):
     issuer: Optional[dict] = None
     valid_from: Optional[str] = None
     valid_to: Optional[str] = None
+    # Full verified certificate chain (leaf-first) as PEM blocks, captured at
+    # sealing time. fingerprint_sha256 is the SHA-256 of chain_pem[0]'s DER.
+    # Persisting the raw certs (not just the fingerprint) lets anyone re-validate
+    # the chain and signatures entirely offline, years later, against the cert
+    # that was actually presented during sealing.
+    chain_pem: Optional[list[str]] = None
 
 
 class ArchiveSessionMetadata(BaseModel):
@@ -126,6 +133,27 @@ class ArchiveSessionMetadata(BaseModel):
     notes: Optional[str] = None
 
 
+def _verified_chain_pem(ssock: ssl.SSLSocket) -> list[str]:
+    """Return the full verified certificate chain (leaf-first) as PEM strings.
+
+    Uses the public ``get_verified_chain`` on Python 3.13+ and the private
+    ``_sslobj`` accessor on 3.12; if neither is available it falls back to the
+    leaf alone, so the leaf certificate is always persisted regardless."""
+    getter = getattr(ssock, "get_verified_chain", None)  # public API, 3.13+
+    if getter is None:
+        sslobj = getattr(ssock, "_sslobj", None)  # private accessor, 3.12
+        getter = getattr(sslobj, "get_verified_chain", None) if sslobj else None
+    if getter is not None:
+        try:
+            # public_bytes(ENCODING_PEM) returns str on some builds, bytes on others.
+            pems = [c.public_bytes(_ssl.ENCODING_PEM) for c in getter()]
+            return [p.decode("ascii") if isinstance(p, (bytes, bytearray)) else p for p in pems]
+        except Exception as e:
+            print(f"Verified-chain capture failed, storing leaf only: {e}")
+    der = ssock.getpeercert(binary_form=True)
+    return [ssl.DER_cert_to_PEM_cert(der)] if der else []
+
+
 def get_tls_cert_info(hostname: str) -> Optional[TLSCertInfo]:
     try:
         ctx = ssl.create_default_context()
@@ -139,8 +167,10 @@ def get_tls_cert_info(hostname: str) -> Optional[TLSCertInfo]:
                     issuer=dict(item for rdn in cert_dict.get('issuer', ()) for item in rdn),
                     valid_from=cert_dict.get('notBefore'),
                     valid_to=cert_dict.get('notAfter'),
+                    chain_pem=_verified_chain_pem(ssock),
                 )
-                print(f"TLS cert fingerprint for {hostname}: {info.fingerprint_sha256}")
+                print(f"TLS cert fingerprint for {hostname}: {info.fingerprint_sha256} "
+                      f"({len(info.chain_pem or [])} cert(s) in chain)")
                 return info
     except Exception as e:
         print(f"TLS certificate capture failed for {hostname}: {e}")
@@ -413,6 +443,14 @@ def merge_har_attachments(har_path: Path) -> Path:
     attachment_count = 0
     missing_count = 0
     missing_by_mime: dict[str, int] = {}
+    # A second, distinct loss class: entries Playwright never even gave a `_file`
+    # ref to, yet bytes crossed the wire (_transferSize > 0). The content recorder
+    # silently dropped the body — overwhelmingly large media (<video> progressive
+    # downloads) whose bytes are consumed by the browser's media pipeline. Tally
+    # these too; otherwise media-body loss is invisible (no missing-attachment
+    # warning fires) and only surfaces much later as un-reassemblable videos.
+    dropped_count = 0
+    dropped_by_mime: dict[str, int] = {}
     with open(har_path, 'rb') as har_f, \
          open(temp_path, 'w', encoding='utf-8') as out_f:
 
@@ -461,6 +499,23 @@ def merge_har_attachments(har_path: Path) -> Path:
                     missing_count += 1
                     mime_key = content.get('mimeType', '?').split(';')[0]
                     missing_by_mime[mime_key] = missing_by_mime.get(mime_key, 0) + 1
+            else:
+                # No `_file` ref at all. If bytes were transferred for a 200/206
+                # but no body was inlined, the recorder dropped it (the
+                # media-pipeline loss class — content.size is left at -1).
+                response = entry.get('response', {})
+                transfer = response.get('_transferSize') or 0
+                if (
+                    transfer > 0
+                    and response.get('status') in (200, 206)
+                    and 'text' not in content
+                    # size < 0 is Playwright's "body not captured" marker; a
+                    # legitimately empty body records size 0, which we must not flag.
+                    and content.get('size', -1) < 0
+                ):
+                    dropped_count += 1
+                    mime_key = content.get('mimeType', '?').split(';')[0]
+                    dropped_by_mime[mime_key] = dropped_by_mime.get(mime_key, 0) + 1
 
             if not first:
                 out_f.write(',')
@@ -472,18 +527,34 @@ def merge_har_attachments(har_path: Path) -> Path:
     # Move the merged HAR to the archive root and delete the whole workspace.
     if missing_count:
         pct_lost = missing_count * 100 // max(attachment_count, 1)
-        print(f"⚠️  Merging HAR: {attachment_count} attachments referenced, "
+        print(f"WARNING: Merging HAR: {attachment_count} attachments referenced, "
               f"{missing_count} MISSING ({pct_lost}% of bodies lost).")
         print("    Missing by MIME type (top contributors):")
         for mime, n in sorted(missing_by_mime.items(), key=lambda kv: -kv[1])[:8]:
             print(f"      {n:>5}  {mime}")
         print("    This means Playwright finalized the HAR with `_file` "
-              "references whose attachment files were never written — "
+              "references whose attachment files were never written -- "
               "typically because context.close() ran while requests were "
               "still in flight (X-button close is the usual culprit).")
     else:
         print(f"Merging HAR attachments into self-contained HAR ({attachment_count} attachments)...")
-    temp_path.rename(final_path)
+
+    if dropped_count:
+        print(f"WARNING: HAR body capture: {dropped_count} response(s) transferred over "
+              f"the network but had NO body recorded (Playwright never wrote a "
+              f"`_file` for them).")
+        print("    Dropped by MIME type (top contributors):")
+        for mime, n in sorted(dropped_by_mime.items(), key=lambda kv: -kv[1])[:8]:
+            print(f"      {n:>5}  {mime}")
+        print("    This is the media-pipeline loss class: bodies consumed by the "
+              "browser's <video>/<audio> decoder never reach record_har_content "
+              "(a Playwright limitation, not a merge fault). Such media must be "
+              "re-acquired from the CDN (full_asset) during extraction.")
+    # os.replace (not Path.rename): atomic overwrite on both platforms. On
+    # Windows Path.rename raises FileExistsError when final_path already exists
+    # (e.g. a re-merge / resumed session), which would abort the merge and strand
+    # the bodies in the workspace.
+    os.replace(str(temp_path), str(final_path))
     shutil.rmtree(workspace_dir)
     print("HAR merge complete.")
     return final_path

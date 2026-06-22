@@ -86,13 +86,17 @@ def threads_post_to_entities(post: ThreadsPost) -> ExtractedEntitiesFlattened:
     )
     extracted_posts.append(post_entity)
 
-    # Only emit a top-level Media when the post itself carries an asset. Threads
-    # has an abundance of text-only posts and replies (and carousel parents, whose
-    # media lives in carousel_media below) that have no image/video of their own —
-    # emitting a Media for them would create identity-less junk rows, since media
-    # identity is url_suffix (the CDN filename), which would be NULL here.
+    # Only emit a top-level Media when the post itself carries an asset AND is not
+    # a carousel. Threads has an abundance of text-only posts and replies (no
+    # image/video of their own) — emitting a Media for them would create
+    # identity-less junk rows, since media identity is url_suffix (the CDN
+    # filename), which would be NULL there. Carousels are excluded for the opposite
+    # reason: a carousel parent carries its own image_versions2 (the cover/preview
+    # image) even when every slide is a video, so _asset_url_from_item(post) would
+    # return that cover jpg and emit a spurious still-image row alongside the real
+    # per-slide assets, which live in carousel_media below.
     asset_url = _asset_url_from_item(post)
-    if asset_url:
+    if asset_url and not post.carousel_media:
         extracted_media.append(Media(
             id_on_platform=post.id,
             url_suffix=canonical_cdn_url(asset_url),
