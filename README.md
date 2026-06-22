@@ -301,6 +301,7 @@ UPDATE archive_session SET incorporation_status = 'pending' WHERE incorporation_
 
 check local works
 ```bash
+# tmux remember
 cd code/evidenceplatform
 uv sync --upgrade
 BROWSING_PLATFORM_DEV=1 uv run python browsing_platform/server/server.py
@@ -328,10 +329,46 @@ mysqldump -u charlie -ppassword evidenceplatform > evidenceplatform_backup_$(dat
 
 uv run infra/migrate.py
 
+# restore 50GB db from live if really want to test on dev.
+mysql -u charlie -ppassword -e "DROP DATABASE evidenceplatform; CREATE DATABASE evidenceplatform;"
+mysql -u charlie -ppassword evidenceplatform < evidenceplatform_backup_20260619_101529.sql
 ```
 
-## PROD
+### PROD
 
 ```bash
 mysqldump --no-tablespaces -u golf -ppassword5 evidenceplatform > evidenceplatform_backup_$(date +%Y%m%d_%H%M%S).sql
+
+tar -czf evidenceplatform_backup_20260618_215259.sql.tar.gz evidenceplatform_backup_20260618_215259.sql
+
+git pull
+
+sudo systemctl stop evidenceplatform
+# so when I reboot after apt updates etc.. it doesn't come back!
+sudo systemctl disable evidenceplatform
+
+uv run infra/migrate.py
+```
+
+**Backend:**
+```bash
+uv sync --upgrade
+```
+
+**Frontend:**
+```bash
+cd browsing_platform/client
+
+# Install dependencies
+pnpm install
+
+# CRITICAL: Verify .env.production has the correct API endpoint
+cat .env.production
+# Should show: REACT_APP_SERVER_ENDPOINT=https://your-production-domain.com/
+
+# Build for production (uses .env.production automatically)
+# should put artifacts in the dist folder (build folder should be empty)
+pnpm build
+
+cd ../..
 ```
