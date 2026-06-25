@@ -13,10 +13,18 @@ import os
 import threading
 import traceback
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
+import root_anchor
 from browsing_platform.server.services.ws_manager import BroadcastManager
-from db_loaders.archives_db_loader import register_archives, parse_archives, extract_entities
+from db_loaders.archives_db_loader import (
+    register_archives,
+    requeue_archives,
+    parse_archives,
+    extract_entities,
+    set_archives_dir,
+)
 from db_loaders.thumbnail_generator import generate_missing_thumbnails
 from utils import db
 
@@ -95,7 +103,75 @@ class IncorporationManager:
 manager = IncorporationManager()
 
 
-def _run_incorporation(job_id: int):
+def _resolve_scope(limit: Optional[int], name_filter: Optional[str], mode: Optional[str]):
+    """Resolve the effective incorporation scope from explicit args + env defaults.
+
+    limit:  explicit value wins; else INCORPORATION_DEV_LIMIT; else 100 in dev,
+            unbounded otherwise. A value <= 0 means "no limit". Selection is
+            newest-first, so a limit picks the most recent archives.
+    filter: explicit value wins; else INCORPORATION_DEV_FILTER. Substring or glob
+            matched against the archive directory name.
+    mode:   'register' (default) registers new archives then runs B→C→D;
+            'rerun' re-incorporates the latest already-registered archives in
+            place (idempotent, no accumulation).
+    """
+    is_dev = os.getenv("BROWSING_PLATFORM_DEV") == "1"
+
+    if limit is None:
+        env_limit = os.getenv("INCORPORATION_DEV_LIMIT")
+        if env_limit not in (None, ""):
+            try:
+                limit = int(env_limit)
+            except ValueError:
+                logger.warning(f"Ignoring non-integer INCORPORATION_DEV_LIMIT={env_limit!r}")
+                limit = None
+        elif is_dev:
+            limit = 100
+    if limit is not None and limit <= 0:
+        limit = None  # explicit "process everything"
+
+    if name_filter is None:
+        name_filter = os.getenv("INCORPORATION_DEV_FILTER") or None
+
+    mode = (mode or "register").lower()
+    if mode not in ("register", "rerun"):
+        logger.warning(f"Unknown incorporation mode {mode!r}, falling back to 'register'")
+        mode = "register"
+
+    return limit, name_filter, mode
+
+
+def _resolve_archives_dir_override() -> Optional[Path]:
+    """Return an alternate archives root for dev ingestion, or None.
+
+    Honored only in dev (BROWSING_PLATFORM_DEV=1). DEV_ARCHIVES_DIR lets the
+    incorporation pipeline read from a small curated fixture folder instead of the
+    full ./archives corpus. Returns None when unset, empty, or pointing at the
+    default ROOT_ARCHIVES — in which case ingestion proceeds against ./archives
+    with the newest-first / limit / filter behaviour fully in effect.
+
+    NB: this only redirects the ingestion *read* path. The browsing platform still
+    serves media from the statically mounted ./archives, so a separate fixture dir
+    is for verifying ingestion, not for browsing its media.
+    """
+    if os.getenv("BROWSING_PLATFORM_DEV") != "1":
+        return None
+    raw = os.getenv("DEV_ARCHIVES_DIR")
+    if not raw:
+        return None
+    candidate = Path(raw).expanduser()
+    try:
+        if candidate.resolve() == root_anchor.ROOT_ARCHIVES.resolve():
+            return None
+    except OSError:
+        pass
+    if not candidate.is_dir():
+        logger.warning(f"DEV_ARCHIVES_DIR={raw!r} is not an existing directory; ignoring")
+        return None
+    return candidate
+
+
+def _run_incorporation(job_id: int, limit: Optional[int] = None, name_filter: Optional[str] = None, mode: Optional[str] = None):
     """Entry point for the background thread.
 
     Only messages explicitly passed to incorporation_ws.broadcast() will reach
@@ -108,12 +184,39 @@ def _run_incorporation(job_id: int):
     cancel = manager.is_cancel_requested
     error_message = None
     status = "completed"
+
+    limit, name_filter, mode = _resolve_scope(limit, name_filter, mode)
+    scope_desc = (
+        f"mode={mode}, limit={'∞' if limit is None else limit}"
+        + (f", filter='{name_filter}'" if name_filter else "")
+    )
+
+    # #3 — optional dev fixture directory. Applied for the duration of the job and
+    # restored afterwards so other code paths keep seeing the default ./archives.
+    archives_override = _resolve_archives_dir_override()
+    original_archives_dir = root_anchor.ROOT_ARCHIVES
+
     try:
-        emit("Starting incorporation pipeline…")
+        emit(f"Starting incorporation pipeline… ({scope_desc})")
 
-        emit("Part A — registering archives")
-        register_archives(limit=100 if os.getenv("BROWSING_PLATFORM_DEV") == "1" else None, cancel_check=cancel, emit=emit)
+        if archives_override is not None:
+            set_archives_dir(archives_override)
+            emit(f"Dev archives directory: {archives_override}")
 
+        if mode == "rerun":
+            emit("Part A — re-queuing latest archives")
+            requeued = requeue_archives(limit=limit, cancel_check=cancel, emit=emit, name_filter=name_filter)
+            emit(f"Part A — {requeued} archives re-queued")
+        else:
+            emit("Part A — registering archives")
+            register_archives(limit=limit, cancel_check=cancel, emit=emit, name_filter=name_filter)
+
+        # The scope is bounded entirely by Part A (which rows are 'pending'); B/C/D
+        # then drain whatever is pending/parsed. We must NOT pass `limit` to B/C/D:
+        # their queues have no ORDER BY, so a slice could process unrelated leftover
+        # rows and skip the cohort A just selected — and the thumbnail `limit` counts
+        # media rows, not archives, so it would under-generate. Draining is also what
+        # lets archives left pending by an earlier interrupted run get finished.
         emit("Part B — parsing HAR files")
         parse_archives(cancel_check=cancel, emit=emit)
 
@@ -149,6 +252,9 @@ def _run_incorporation(job_id: int):
         emit(f"ERROR: {e}")
         incorporation_ws.broadcast({"type": "done", "status": "failed", "error": error_message})
     finally:
+        # Restore the default archives root so file serving / later jobs are unaffected.
+        if archives_override is not None:
+            set_archives_dir(original_archives_dir)
         manager.finish(job_id, status, error_message)
 
 

@@ -4,7 +4,15 @@ import logging
 import os
 import threading
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from enum import Enum
+from typing import Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+
+
+class IncorporationMode(str, Enum):
+    register = "register"
+    rerun = "rerun"
 
 from browsing_platform.server.services.incorporation_service import manager, _run_incorporation, incorporation_ws
 from browsing_platform.server.services.permissions import auth_admin_access
@@ -24,6 +32,22 @@ router = APIRouter(prefix="/incorporate", tags=["incorporate"])
 def start(
     request: Request,
     background_tasks: BackgroundTasks,
+    limit: Optional[int] = Query(
+        None,
+        description="Max archives to process, newest-first. Omit for env/dev default; "
+                    "<=0 means no limit.",
+    ),
+    name_filter: Optional[str] = Query(
+        None,
+        alias="filter",
+        description="Only process archives whose directory name matches this substring or glob.",
+    ),
+    mode: IncorporationMode = Query(
+        IncorporationMode.register,
+        description="'register' (default) ingests new archives; 'rerun' re-incorporates "
+                    "the latest already-registered archives in place (no accumulation). "
+                    "Any other value is rejected with 422.",
+    ),
     permissions=Depends(auth_admin_access),
 ):
     user_id = getattr(permissions, "user_id", None)
@@ -37,13 +61,17 @@ def start(
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
-    background_tasks.add_task(_run_in_thread, job_id)
+    background_tasks.add_task(_run_in_thread, job_id, limit, name_filter, mode.value)
     return {"status": "started", "job_id": job_id}
 
 
-def _run_in_thread(job_id: int):
+def _run_in_thread(job_id: int, limit=None, name_filter=None, mode=None):
     """Wrapper that launches the incorporation work in a daemon thread."""
-    t = threading.Thread(target=_run_incorporation, args=(job_id,), daemon=True)
+    t = threading.Thread(
+        target=_run_incorporation,
+        args=(job_id, limit, name_filter, mode),
+        daemon=True,
+    )
     t.start()
 
 

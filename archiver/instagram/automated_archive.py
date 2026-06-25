@@ -15,10 +15,9 @@ from archiver.archive import (
     ArchiveSessionMetadata,
     StorageConfig,
     finish_recording,
-    get_tls_cert_info,
     screen_record,
 )
-from archiver.automated_scripts.instagram_followers_scraper import run_followers_automation
+from archiver.instagram.automated_scripts.instagram_followers_scraper import run_followers_automation
 from archiver.dialogs import (
     DialogForm,
     FormFieldBool,
@@ -266,7 +265,6 @@ def archive_followers_session(
     archive_dir.mkdir(parents=True, exist_ok=True)
 
     my_public_ip = get_my_public_ip()
-    tls_cert = get_tls_cert_info("www.instagram.com")
 
     with open(profile_path / "state.json", "r") as f:
         storage_state = json.load(f)
@@ -285,7 +283,7 @@ def archive_followers_session(
         har_archive=archive_dir / "har_workspace" / "archive.har",
         my_ip=my_public_ip,
         platform=get_system_info(),
-        tls_cert=tls_cert,
+        # tls_certs is populated post-session in finish_recording.
     )
 
     try:

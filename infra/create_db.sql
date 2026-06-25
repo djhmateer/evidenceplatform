@@ -36,7 +36,7 @@ create index account_display_name_index
     on account (display_name);
 
 create unique index uq_account_id_on_platform
-    on account (id_on_platform);
+    on account (id_on_platform, platform);
 
 create index account_merged_into_account_id_index
     on account (merged_into_account_id);
@@ -299,6 +299,9 @@ create index comment_account_id_index
 create index comment_id_on_platform_index
     on comment (id_on_platform);
 
+create unique index uq_comment_id_on_platform_platform
+    on comment (id_on_platform, platform);
+
 create index comment_post_id_index
     on comment (post_id);
 
@@ -400,6 +403,9 @@ create index media_thumbnail_status_index
 create index media_url_suffix_index
     on media (url_suffix);
 
+create unique index uq_media_url_suffix_platform
+    on media (url_suffix, platform);
+
 create fulltext index search_idx_fulltext
     on media (annotation);
 
@@ -472,6 +478,9 @@ create index post_account_id_index
 
 create index post_id_on_platform_index
     on post (id_on_platform);
+
+create unique index uq_post_id_on_platform_platform
+    on post (id_on_platform, platform);
 
 create index post_publication_date_date
     on post ((cast(`publication_date` as date)));
