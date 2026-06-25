@@ -6,6 +6,8 @@ import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import SkipPreviousIcon from '@mui/icons-material/SkipPrevious';
 import SkipNextIcon from '@mui/icons-material/SkipNext';
+import FullscreenIcon from '@mui/icons-material/Fullscreen';
+import FullscreenExitIcon from '@mui/icons-material/FullscreenExit';
 import {formatTime} from "../../lib/timeFormat";
 
 const FPS = 30;
@@ -27,6 +29,7 @@ interface IProps {
 
 
 export default function VideoPlayer({src, zoom, translateX, translateY, onCanPlay, onLoaded, onNaturalAspectRatio, thumbnailLoaded, initialAspectRatio}: IProps) {
+    const containerRef = useRef<HTMLDivElement>(null);
     const videoRef = useRef<HTMLVideoElement>(null);
     const [playing, setPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
@@ -38,6 +41,7 @@ export default function VideoPlayer({src, zoom, translateX, translateY, onCanPla
     const [focused, setFocused] = useState(false);
     const [videoAspectRatio, setVideoAspectRatio] = useState(initialAspectRatio ?? 16 / 9);
     const [controlsVisible, setControlsVisible] = useState(true);
+    const [isFullscreen, setIsFullscreen] = useState(false);
     const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const clearHideTimer = useCallback(() => {
@@ -72,6 +76,21 @@ export default function VideoPlayer({src, zoom, translateX, translateY, onCanPla
         window.addEventListener('keydown', handler);
         return () => window.removeEventListener('keydown', handler);
     }, [focused, stepFrame]);
+
+    // Keep fullscreen state in sync with browser (e.g. Esc, F11, or native exit)
+    useEffect(() => {
+        const handler = () => setIsFullscreen(document.fullscreenElement === containerRef.current);
+        document.addEventListener('fullscreenchange', handler);
+        return () => document.removeEventListener('fullscreenchange', handler);
+    }, []);
+
+    const toggleFullscreen = () => {
+        if (document.fullscreenElement) {
+            document.exitFullscreen();
+        } else {
+            containerRef.current?.requestFullscreen();
+        }
+    };
 
     const togglePlay = () => {
         const v = videoRef.current;
@@ -115,7 +134,14 @@ export default function VideoPlayer({src, zoom, translateX, translateY, onCanPla
 
     return (
         <Box
-            sx={{width: '100%', position: 'relative', aspectRatio: videoAspectRatio, backgroundColor: '#000'}}
+            ref={containerRef}
+            sx={{
+                width: '100%',
+                position: 'relative',
+                aspectRatio: videoAspectRatio,
+                backgroundColor: '#000',
+                ...(isFullscreen && {aspectRatio: 'auto', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center'}),
+            }}
             tabIndex={0}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
@@ -254,6 +280,11 @@ export default function VideoPlayer({src, zoom, translateX, translateY, onCanPla
                             </Box>
                         </Fade>
                     </Box>
+                    <Tooltip title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
+                        <IconButton size="small" onClick={toggleFullscreen} sx={{color: '#fff', p: 0.25}}>
+                            {isFullscreen ? <FullscreenExitIcon fontSize="small"/> : <FullscreenIcon fontSize="small"/>}
+                        </IconButton>
+                    </Tooltip>
                 </Box>
             </Fade>
         </Box>
