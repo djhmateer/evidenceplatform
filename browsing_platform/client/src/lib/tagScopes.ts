@@ -7,9 +7,9 @@ import {E_ENTITY_TYPES} from '../types/entities';
 // backend whitelist derived from `_SCOPE_BRANCHES` in services/search.py — the two are kept in
 // sync manually across the language boundary, so any change here must be matched there.
 export const SCOPE_OPTIONS: Partial<Record<E_ENTITY_TYPES, E_ENTITY_TYPES[]>> = {
-    media:   ["media", "post", "account", "media_part"],
-    post:    ["post", "media", "account", "media_part"],
-    account: ["account", "post", "media", "media_part"],
+    media:   ["media", "post", "account"],
+    post:    ["post", "media", "account"],
+    account: ["account", "post", "media"],
 };
 
 // Every entity type that may legitimately appear in the `ts` URL param / tag_scopes payload,

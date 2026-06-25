@@ -306,6 +306,24 @@ class Media(EntityBase):
         return v
 
 
+class MediaPart(EntityBase):
+    media_id: int
+    timestamp_range_start: Optional[float] = None
+    timestamp_range_end: Optional[float] = None
+    crop_area: Optional[list[float]] = None
+    thumbnail_path: Optional[str] = None
+    thumbnail_status: Literal['pending', 'generated', 'not_needed', 'error'] = "pending"
+
+    @field_validator('crop_area', mode='before')
+    def parse_crop_area(cls, v, _):
+        if isinstance(v, str):
+            try:
+                v = json.loads(v)
+            except json.JSONDecodeError:
+                v = None
+        return v
+
+
 class Comment(EntityBase):
     id_on_platform: Optional[str] = None
     url_suffix: Optional[str] = Field(None, max_length=250)
@@ -565,6 +583,7 @@ class ExtractedEntitiesFlattened(BaseModel):
 
 class MediaAndAssociatedEntities(Media):
     media_parent_post: Optional['PostAndAssociatedEntities'] = None
+    media_parts: list[MediaPart] = Field(default_factory=list)
 
 class PostAndAssociatedEntities(Post):
     post_author: Optional['AccountAndAssociatedEntities'] = None

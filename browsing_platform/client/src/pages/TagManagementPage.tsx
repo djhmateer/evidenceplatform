@@ -53,7 +53,7 @@ import {toast} from "material-react-toastify";
 import ImportTagsTab from "./TagManagement/ImportTagsTab";
 import ImportAnnotationsTab from "./TagManagement/ImportAnnotationsTab";
 
-const ENTITY_AFFINITY_OPTIONS = ["account", "post", "media", "media_part"];
+const ENTITY_AFFINITY_OPTIONS = ["account", "post", "media"];
 
 /* ── Tab 1: Tag Types ───────────────────────────────────────────────────────── */
 

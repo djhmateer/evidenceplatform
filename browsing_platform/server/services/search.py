@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 from typing import Literal, Optional, Any
@@ -198,21 +199,20 @@ def extract_account_handle(s: str) -> Optional[str]:
 # Per (searched entity, tag scope): a SELECT producing (matched_id, root_id) that drives from the
 # `tag_desc` descendant CTE into the indexed association table(s), then maps back to the searched
 # entity's id. Driving from `tag_desc` (a small set) into `idx_*_tag_id` and the FK indexes keeps
-# every branch index-friendly. `media_part` is only ever a tag *source* (never searched), so its
-# tags roll up to the parent media's id (and onward to the post/account).
+# every branch index-friendly. `media_part` is its OWN searched entity (the media-mode UNION emits
+# parts as first-class results) and matches strictly on its own tags — a part is not pulled in by
+# a tag on its parent media/post/account, which would flood results with every sibling part.
 _SCOPE_BRANCHES: dict[tuple[str, str], str] = {
     ("media", "media"):        "SELECT mt.media_id AS matched_id, td.root_id FROM tag_desc td JOIN media_tag mt ON mt.tag_id = td.id",
     ("media", "post"):         "SELECT m.id AS matched_id, td.root_id FROM tag_desc td JOIN post_tag pt ON pt.tag_id = td.id JOIN media m ON m.post_id = pt.post_id",
     ("media", "account"):      "SELECT m.id AS matched_id, td.root_id FROM tag_desc td JOIN account_tag at ON at.tag_id = td.id JOIN media m ON m.account_id = at.account_id",
-    ("media", "media_part"):   "SELECT mp.media_id AS matched_id, td.root_id FROM tag_desc td JOIN media_part_tag mpt ON mpt.tag_id = td.id JOIN media_part mp ON mp.id = mpt.media_part_id",
     ("post", "post"):          "SELECT pt.post_id AS matched_id, td.root_id FROM tag_desc td JOIN post_tag pt ON pt.tag_id = td.id",
     ("post", "media"):         "SELECT m.post_id AS matched_id, td.root_id FROM tag_desc td JOIN media_tag mt ON mt.tag_id = td.id JOIN media m ON m.id = mt.media_id WHERE m.post_id IS NOT NULL",
     ("post", "account"):       "SELECT p.id AS matched_id, td.root_id FROM tag_desc td JOIN account_tag at ON at.tag_id = td.id JOIN post p ON p.account_id = at.account_id",
-    ("post", "media_part"):    "SELECT m.post_id AS matched_id, td.root_id FROM tag_desc td JOIN media_part_tag mpt ON mpt.tag_id = td.id JOIN media_part mp ON mp.id = mpt.media_part_id JOIN media m ON m.id = mp.media_id WHERE m.post_id IS NOT NULL",
     ("account", "account"):    "SELECT at.account_id AS matched_id, td.root_id FROM tag_desc td JOIN account_tag at ON at.tag_id = td.id",
     ("account", "post"):       "SELECT p.account_id AS matched_id, td.root_id FROM tag_desc td JOIN post_tag pt ON pt.tag_id = td.id JOIN post p ON p.id = pt.post_id WHERE p.account_id IS NOT NULL",
     ("account", "media"):      "SELECT m.account_id AS matched_id, td.root_id FROM tag_desc td JOIN media_tag mt ON mt.tag_id = td.id JOIN media m ON m.id = mt.media_id WHERE m.account_id IS NOT NULL",
-    ("account", "media_part"): "SELECT m.account_id AS matched_id, td.root_id FROM tag_desc td JOIN media_part_tag mpt ON mpt.tag_id = td.id JOIN media_part mp ON mp.id = mpt.media_part_id JOIN media m ON m.id = mp.media_id WHERE m.account_id IS NOT NULL",
+    ("media_part", "media_part"): "SELECT mpt.media_part_id AS matched_id, td.root_id FROM tag_desc td JOIN media_part_tag mpt ON mpt.tag_id = td.id",
 }
 
 # Allowed tag scopes per searched entity, derived from _SCOPE_BRANCHES so the whitelist can never
@@ -459,6 +459,11 @@ def search_posts(query: ISearchQuery, search_results_transform: SearchResultTran
 
 
 def search_media(query: ISearchQuery, search_results_transform: SearchResultTransform) -> list[SearchResult]:
+    """Media-mode search. Every MediaPart is treated as a first-class, media-like result: the inner
+    query is a UNION ALL of a media arm and a media_part arm (the part arm drives off media_part
+    joined to its parent media, so it inherits the parent's annotation/date/type/filters but matches
+    tags on its OWN media_part_tag). Pagination and sorting are applied to the union so the two
+    streams interleave correctly. A part links back to its parent media page with ?part_id=… ."""
     query_args: dict["str", Any] = {
         "limit": query.page_size,
         "offset": (query.page_number - 1) * query.page_size,
@@ -481,46 +486,116 @@ def search_media(query: ISearchQuery, search_results_transform: SearchResultTran
         general_filter, general_args = json_logic_format_to_where_clause(query.advanced_filters, "media")
         where_clauses.append(general_filter)
         query_args.update(general_args)
-    tag_filter_join = ""
-    if query.tag_ids:
-        tag_filter_join, tag_filter_args = build_tag_filter_join("media", query.tag_ids, query.tag_filter_mode or "any", query.tag_scopes)
-        query_args.update(tag_filter_args)
     inner_where = ' AND '.join(f'({c})' for c in where_clauses)
-    order_by = resolve_order_by("media", query.sort_by, query.sort_order, "media.id DESC")
-    rows = db.execute_query(  # nosec B608 - inner_where, order_by and tag_filter_join built from safe clauses only
-        f"""SELECT m.id, m.thumbnail_path, m.local_url, m.aspect_ratio, m.media_type, m.publication_date,
+
+    media_tag_join = ""
+    part_tag_join = ""
+    if query.tag_ids:
+        media_tag_join, media_tag_args = build_tag_filter_join(
+            "media", query.tag_ids, query.tag_filter_mode or "any", query.tag_scopes)
+        query_args.update(media_tag_args)
+        # The part arm matches on the part's own tags only (same tag_ids → identical params).
+        part_tag_join, part_tag_args = build_tag_filter_join(
+            "media_part", query.tag_ids, query.tag_filter_mode or "any", ["media_part"])
+        query_args.update(part_tag_args)
+
+    # Both arms expose the same column list so the union typechecks; the part arm overrides the
+    # part-specific columns. The media arm leaves them NULL.
+    media_arm = f"""SELECT media.id AS result_media_id, NULL AS part_id,
+                           media.thumbnail_path AS thumbnail_path, NULL AS part_thumbnail_path,
+                           media.local_url AS local_url, media.aspect_ratio AS aspect_ratio,
+                           media.publication_date AS publication_date, media.account_id AS account_id,
+                           media.media_type AS media_type,
+                           NULL AS crop_area, NULL AS timestamp_range_start, NULL AS timestamp_range_end
+                    FROM media
+                    {media_tag_join}
+                    WHERE {inner_where}"""
+
+    # The part arm is omitted for URL lookups (an exact-URL search wants the media, not every part
+    # of it).
+    if parsed_url:
+        union_sql = media_arm
+    else:
+        part_arm = f"""SELECT media.id AS result_media_id, media_part.id AS part_id,
+                              media.thumbnail_path AS thumbnail_path, media_part.thumbnail_path AS part_thumbnail_path,
+                              media.local_url AS local_url, media.aspect_ratio AS aspect_ratio,
+                              media.publication_date AS publication_date, media.account_id AS account_id,
+                              media.media_type AS media_type,
+                              media_part.crop_area AS crop_area,
+                              media_part.timestamp_range_start AS timestamp_range_start,
+                              media_part.timestamp_range_end AS timestamp_range_end
+                       FROM media_part
+                       JOIN media ON media.id = media_part.media_id
+                       {part_tag_join}
+                       WHERE {inner_where}"""
+        union_sql = f"{media_arm}\n               UNION ALL\n               {part_arm}"
+
+    direction = "ASC" if (query.sort_order or "").lower() == "asc" else "DESC"
+    if query.sort_by == "publication_date":
+        union_order = f"u.publication_date {direction}, u.result_media_id DESC, u.part_id ASC"
+    else:  # "id" or default — part_id ASC puts the media itself (NULL) ahead of its parts
+        union_order = f"u.result_media_id {direction}, u.part_id ASC"
+
+    rows = db.execute_query(  # nosec B608 - inner_where, union_order and tag joins built from safe clauses only
+        f"""SELECT m.result_media_id AS id, m.part_id, m.thumbnail_path, m.part_thumbnail_path,
+                   m.local_url, m.aspect_ratio, m.media_type, m.publication_date,
+                   m.crop_area, m.timestamp_range_start, m.timestamp_range_end,
                    a.display_name AS account_display_name, a.url_suffix AS account_url_suffix, a.platform AS account_platform
            FROM (
-               SELECT media.id, media.thumbnail_path, media.local_url, media.aspect_ratio, media.publication_date, media.account_id, media.media_type
-               FROM media
-               {tag_filter_join}
-               WHERE {inner_where}
-               ORDER BY {order_by}
+               SELECT * FROM (
+                   {union_sql}
+               ) u
+               ORDER BY {union_order}
                LIMIT %(limit)s OFFSET %(offset)s
            ) m
            LEFT JOIN account a ON m.account_id = a.id""",
         query_args,
         timeout_ms=10_000
     )
-    results = [
-        SearchResult(
-            page="media",
-            id=row["id"],
-            title=reconstruct_url(row["account_url_suffix"], row["account_platform"]) or "",
-            details="",
-            thumbnails=[Thumbnail(src=src, aspect_ratio=row.get("aspect_ratio")) for src in [
+
+    results = []
+    for row in rows:
+        account_url = reconstruct_url(row["account_url_suffix"], row["account_platform"])
+        metadata = {
+            "publication_date": row["publication_date"].isoformat() if row["publication_date"] else None,
+            "account_display_name": row["account_display_name"],
+            "account_url": account_url,
+            "media_type": row["media_type"],
+        }
+        if row["part_id"] is not None:
+            # A media-part result: prefer its own (already-cropped) thumbnail, falling back to the
+            # parent media's thumbnail while the part thumbnail is still pending.
+            part_thumb = row.get("part_thumbnail_path")
+            if part_thumb and part_thumb.startswith(LOCAL_THUMBNAILS_DIR_ALIAS):
+                thumb_src = part_thumb
+            else:
+                thumb_src = get_media_thumbnail_path(row["thumbnail_path"], row["local_url"])
+            crop = row.get("crop_area")
+            if isinstance(crop, str):
+                try:
+                    crop = json.loads(crop)
+                except json.JSONDecodeError:
+                    crop = None
+            metadata.update({
+                "part_id": row["part_id"],
+                "crop_area": crop,
+                "timestamp_range_start": row.get("timestamp_range_start"),
+                "timestamp_range_end": row.get("timestamp_range_end"),
+            })
+            thumbnails = [Thumbnail(src=s, aspect_ratio=row.get("aspect_ratio")) for s in [thumb_src] if s]
+        else:
+            thumbnails = [Thumbnail(src=src, aspect_ratio=row.get("aspect_ratio")) for src in [
                 get_media_thumbnail_path(row["thumbnail_path"], row["local_url"]),
                 row["local_url"],
-            ] if src],
-            metadata={
-                "publication_date": row["publication_date"].isoformat() if row["publication_date"] else None,
-                "account_display_name": row["account_display_name"],
-                "account_url": reconstruct_url(row["account_url_suffix"], row["account_platform"]),
-                "media_type": row["media_type"],
-            }
-        )
-        for row in rows
-    ]
+            ] if src]
+        results.append(SearchResult(
+            page="media",
+            id=row["id"],
+            title=account_url or "",
+            details="",
+            thumbnails=thumbnails,
+            metadata=metadata,
+        ))
     results = apply_search_results_transform(results, search_results_transform)
     return results
 

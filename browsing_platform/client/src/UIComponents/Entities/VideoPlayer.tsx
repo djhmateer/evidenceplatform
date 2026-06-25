@@ -6,6 +6,7 @@ import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import SkipPreviousIcon from '@mui/icons-material/SkipPrevious';
 import SkipNextIcon from '@mui/icons-material/SkipNext';
+import {formatTime} from "../../lib/timeFormat";
 
 const FPS = 30;
 const FRAME_DURATION = 1 / FPS;
@@ -24,12 +25,6 @@ interface IProps {
     initialAspectRatio?: number;
 }
 
-function formatTime(seconds: number): string {
-    if (!isFinite(seconds)) return '0:00';
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
-}
 
 export default function VideoPlayer({src, zoom, translateX, translateY, onCanPlay, onLoaded, onNaturalAspectRatio, thumbnailLoaded, initialAspectRatio}: IProps) {
     const videoRef = useRef<HTMLVideoElement>(null);

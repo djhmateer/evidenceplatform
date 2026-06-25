@@ -7,6 +7,13 @@ from pydantic import BaseModel, field_validator
 from utils import db
 
 
+def normalize_entity_for_affinity(entity: Optional[str]) -> Optional[str]:
+    """A media_part shares its parent media's tag set — there is no separate 'media_part' affinity,
+    so for any affinity lookup/validation a part is treated as 'media'. Single source of truth for
+    that rule, used across tag lookup, quick-access and annotation validation."""
+    return "media" if entity == "media_part" else entity
+
+
 class ITag(BaseModel):
     id: Optional[int] = None
     create_date: Optional[datetime] = None
@@ -42,7 +49,7 @@ def auto_complete_tags(query: str, tag_type_id: Optional[int] = None, entity: Op
         args["tag_type_id"] = tag_type_id
     if entity is not None:
         where += " AND (tag_type.entity_affinity IS NULL OR JSON_CONTAINS(tag_type.entity_affinity, %(entity_json)s))"
-        args["entity_json"] = json.dumps(entity)
+        args["entity_json"] = json.dumps(normalize_entity_for_affinity(entity))
     matching_rows = db.execute_query(
         f"""SELECT
                 tag.*,

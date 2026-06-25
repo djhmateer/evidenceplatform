@@ -462,6 +462,8 @@ create table media_part
     crop_area             varchar(100)                        null,
     timestamp_range_start float                               null,
     timestamp_range_end   float                               null,
+    thumbnail_path        varchar(200)                        null,
+    thumbnail_status      enum ('pending', 'generated', 'not_needed', 'error') default 'pending' not null,
     constraint media_part_media_id_fk
         foreign key (media_id) references media (id)
 )
@@ -469,6 +471,9 @@ create table media_part
 
 create index media_part_media_id_index
     on media_part (media_id);
+
+create index media_part_thumbnail_status_index
+    on media_part (thumbnail_status);
 
 create fulltext index idx_search_fulltext
     on post (caption, url_suffix);

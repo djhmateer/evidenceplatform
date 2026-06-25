@@ -72,8 +72,10 @@ ROOT_THUMBNAILS = Path(ROOT_DIR) / "thumbnails"
 LOCAL_THUMBNAILS_DIR_ALIAS = 'local_thumbnails'
 
 
-def _read_video_frame(path: str) -> Image.Image:
-    """Extract the first frame from a video file for use as a thumbnail."""
+def _read_video_frame(path: str, seek_seconds: float = 0.0) -> Image.Image:
+    """Extract a frame from a video file for use as a thumbnail. When seek_seconds > 0 the
+    capture is seeked to that timestamp first (used for media-part thumbnails, which preview the
+    part's start frame); if the seek read fails it falls back to the first usable frame."""
     import os
 
     # Check file exists and get size
@@ -129,6 +131,15 @@ def _read_video_frame(path: str) -> Image.Image:
                     f"fps={fps:.1f} is unrealistic, file is likely corrupted or truncated "
                     f"(size: {file_size / 1024:.1f} KB)"
                 )
+
+        # For media-part thumbnails, seek to the part's start timestamp first.
+        if seek_seconds and seek_seconds > 0:
+            cap.set(cv2.CAP_PROP_POS_MSEC, seek_seconds * 1000.0)
+            seeked_ok, seeked_frame = cap.read()
+            if seeked_ok:
+                logger.debug(f"Read frame at {seek_seconds:.2f}s")
+                return Image.fromarray(cv2.cvtColor(seeked_frame, cv2.COLOR_BGR2RGB))
+            logger.debug(f"Seek to {seek_seconds:.2f}s failed, falling back to first frame")
 
         # Try to seek to first frame explicitly
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -264,5 +275,146 @@ async def generate_missing_thumbnails(thumbnail_size=(128, 128), limit: int | No
         logger.info(f"Part D - Generated {generated_count} thumbnails")
 
 
+# --------------------------------------------------------------------------- #
+# Media-part thumbnails
+#
+# A MediaPart is a crop box (+ optional video time range) over a parent media asset. Its
+# thumbnail previews that exact region: for video we seek to timestamp_range_start, then crop the
+# frame to crop_area before resizing. crop_area is [left%, right%, bottom%, top%] with the
+# vertical axis measured from the BOTTOM of the frame (matching the client's CropOverlay), so the
+# top boundary maps to pixel row (100 - top%) and the bottom boundary to (100 - bottom%).
+# --------------------------------------------------------------------------- #
+
+
+def _crop_to_area(img: Image.Image, crop_area) -> Image.Image:
+    """Crop a PIL image to crop_area = [left%, right%, bottom%, top%] (vertical axis from bottom).
+    Returns the image unchanged when crop_area is missing/degenerate."""
+    if not crop_area or len(crop_area) != 4:
+        return img
+    left, right, bottom, top = crop_area
+    w, h = img.width, img.height
+    x0 = max(0, min(w, round(left / 100.0 * w)))
+    x1 = max(0, min(w, round(right / 100.0 * w)))
+    y0 = max(0, min(h, round((100.0 - top) / 100.0 * h)))     # top boundary, from image top
+    y1 = max(0, min(h, round((100.0 - bottom) / 100.0 * h)))  # bottom boundary, from image top
+    if x1 <= x0 or y1 <= y0:
+        return img
+    return img.crop((x0, y0, x1, y1))
+
+
+def _render_part_thumbnail(part_row: dict, thumbnail_size: tuple) -> Image.Image:
+    """Load the parent media, extract the start frame (video) or open the image, crop to the
+    part's crop_area and resize. Synchronous (cv2/PIL); runs in a thread or BackgroundTasks pool."""
+    local_url = part_row["local_url"]
+    if not local_url:
+        raise Exception("Parent media has no local_url")
+    local_path = ROOT_ARCHIVES / local_url.split(f'{LOCAL_ARCHIVES_DIR_ALIAS}/')[1]
+    crop_area = part_row.get("crop_area")
+    if isinstance(crop_area, str):
+        import json
+        try:
+            crop_area = json.loads(crop_area)
+        except json.JSONDecodeError:
+            crop_area = None
+    media_type = part_row["media_type"]
+    if media_type == "image":
+        img = Image.open(str(local_path))
+    elif media_type == "video":
+        img = _read_video_frame(str(local_path), seek_seconds=part_row.get("timestamp_range_start") or 0.0)
+    else:
+        raise Exception("Unsupported media type for thumbnail generation")
+    img = _crop_to_area(img, crop_area)
+    img.thumbnail(thumbnail_size)
+    return img
+
+
+def _persist_part_thumbnail(part_row: dict, thumbnail_size: tuple) -> bool:
+    """Generate, save and record a thumbnail for one media_part row. Returns True on success.
+    part_row must carry: part_id, crop_area, timestamp_range_start, local_url, media_type."""
+    part_id = part_row["part_id"]
+    try:
+        img = _render_part_thumbnail(part_row, thumbnail_size)
+        hash_input = (
+            f"part_{part_id}_{part_row.get('crop_area')}_{part_row.get('timestamp_range_start')}"
+            f"_{thumbnail_size[0]}x{thumbnail_size[1]}"
+        ).encode("utf-8")
+        thumbnail_filename = f"{md5(hash_input).hexdigest()}.jpg"
+        out_path = ROOT_THUMBNAILS / thumbnail_filename
+        save_image(img, out_path)
+    except Exception as e:
+        logger.error(f"Error generating thumbnail for media_part {part_id}: {e}")
+        db.execute_query(
+            "UPDATE media_part SET thumbnail_path = %(p)s, thumbnail_status = 'error' WHERE id = %(id)s",
+            {"p": f"error: {str(e)}"[:200], "id": part_id}, "none"
+        )
+        return False
+    relative_path = f"{LOCAL_THUMBNAILS_DIR_ALIAS}/{thumbnail_filename}"
+    db.execute_query(
+        "UPDATE media_part SET thumbnail_path = %(p)s, thumbnail_status = 'generated' WHERE id = %(id)s",
+        {"p": relative_path, "id": part_id}, "none"
+    )
+    return True
+
+
+_PART_THUMBNAIL_QUERY = """SELECT mp.id AS part_id, mp.crop_area, mp.timestamp_range_start,
+                                  m.local_url, m.media_type
+                           FROM media_part mp JOIN media m ON m.id = mp.media_id"""
+
+
+def generate_media_part_thumbnail(media_part_id: int, thumbnail_size=(128, 128)) -> bool:
+    """Synchronously (re)generate the thumbnail for a single media_part. Called from the
+    media_part save endpoint via FastAPI BackgroundTasks after a crop/trim edit."""
+    row = db.execute_query(
+        f"{_PART_THUMBNAIL_QUERY} WHERE mp.id = %(id)s",
+        {"id": media_part_id}, return_type="single_row"
+    )
+    if row is None:
+        logger.warning(f"generate_media_part_thumbnail: media_part {media_part_id} not found")
+        return False
+    return _persist_part_thumbnail(row, thumbnail_size)
+
+
+async def _process_one_media_part(part_row: dict, thumbnail_size: tuple, semaphore: asyncio.Semaphore) -> bool:
+    async with semaphore:
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(_persist_part_thumbnail, part_row, thumbnail_size), timeout=15
+            )
+        except Exception as e:
+            logger.error(f"Unhandled exception generating media_part {part_row.get('part_id')} thumbnail: {e}")
+            return False
+
+
+async def generate_missing_part_thumbnails(thumbnail_size=(128, 128), limit: int | None = None,
+                                           cancel_check=None, emit: Optional[Callable[[str], None]] = None):
+    """Batch-generate thumbnails for media_parts in 'pending' status (pipeline stage D)."""
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+    generated_count = 0
+    while True:
+        if cancel_check and cancel_check():
+            raise InterruptedError("Cancelled by user")
+        fetch_count = BATCH_SIZE if limit is None else min(BATCH_SIZE, limit - generated_count)
+        if fetch_count <= 0:
+            break
+        rows = db.execute_query(
+            f"{_PART_THUMBNAIL_QUERY} WHERE mp.thumbnail_status = 'pending' LIMIT {fetch_count}",
+            {}, return_type="rows"
+        ) or []
+        if not rows:
+            break
+        results = await asyncio.gather(
+            *[_process_one_media_part(row, thumbnail_size, semaphore) for row in rows],
+            return_exceptions=True,
+        )
+        generated_count += sum(1 for r in results if r is True)
+        if emit:
+            emit(f"Part D — generated {generated_count} media-part thumbnails")
+        if len(rows) < fetch_count:
+            break
+    if generated_count:
+        logger.info(f"Part D - Generated {generated_count} media-part thumbnails")
+
+
 if __name__ == "__main__":
     asyncio.run(generate_missing_thumbnails())
+    asyncio.run(generate_missing_part_thumbnails())

@@ -76,6 +76,12 @@ function MediaSearchResultCell({result, tags, selected, onToggleSelected, largeI
     const thumbnail = result.thumbnails?.[0];
     const fullRes = result.thumbnails?.[1];
     const isVideo = result.metadata?.media_type === 'video';
+    // A media-part result links back to its parent media page with ?part_id=…, which opens the
+    // focus modal. Its thumbnail is already cropped, so show it whole (contain) rather than re-cropping.
+    const partId = result.metadata?.part_id as number | undefined;
+    const href = partId != null
+        ? `/media/${result.id}?part_id=${partId}`
+        : `/${result.page}/${result.id}`;
 
     const pubDate = result.metadata?.publication_date
         ? dayjs(result.metadata.publication_date).format('YYYY-MM-DD')
@@ -135,7 +141,7 @@ function MediaSearchResultCell({result, tags, selected, onToggleSelected, largeI
                     size="small"
                 />
             </>}
-            <a href={`/${result.page}/${result.id}`} style={{textDecoration: 'none'}}>
+            <a href={href} style={{textDecoration: 'none'}}>
                 <Box
                     sx={{
                         position: 'relative',
@@ -147,11 +153,23 @@ function MediaSearchResultCell({result, tags, selected, onToggleSelected, largeI
                     onMouseEnter={() => { setHovered(true); setEverHovered(true); }}
                     onMouseLeave={() => setHovered(false)}
                 >
+                    {partId != null && (
+                        <Chip
+                            label="Segment"
+                            size="small"
+                            sx={{
+                                position: 'absolute', top: 6, right: 6, zIndex: 2,
+                                height: 18, fontSize: '0.62rem', color: '#fff',
+                                backgroundColor: 'rgba(0,0,0,0.65)',
+                                '& .MuiChip-label': {px: 0.75},
+                            }}
+                        />
+                    )}
                     {thumbnail && (
                         <img
                             src={anchor_local_static_files(thumbnail.src) || undefined}
                             alt=""
-                            style={{width: '100%', height: '100%', objectFit: 'cover', display: 'block'}}
+                            style={{width: '100%', height: '100%', objectFit: partId != null ? 'contain' : 'cover', display: 'block'}}
                         />
                     )}
                     {everHovered && fullResSrc && (
@@ -201,9 +219,11 @@ export default function MediaSearchResults({results, tagsMap, selectedIds, onTog
         >
             {results.map((result) => (
                 <MediaSearchResultCell
-                    key={result.id}
+                    key={`${result.id}-${result.metadata?.part_id ?? 'm'}`}
                     result={result}
-                    tags={tagsMap?.[result.id] ?? []}
+                    // tagsMap is keyed by parent media id; a segment's own tags aren't here, so don't
+                    // mislabel the parent media's tags as the segment's (the focus modal shows them).
+                    tags={result.metadata?.part_id != null ? [] : (tagsMap?.[result.id] ?? [])}
                     selected={selectedIds?.has(result.id) ?? false}
                     onToggleSelected={onToggleSelected}
                     largeIcons={largeIcons}

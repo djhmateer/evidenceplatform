@@ -9,6 +9,7 @@ from browsing_platform.server.services.archiving_session import ArchiveSessionWi
 from browsing_platform.server.services.entities_hierarchy import nest_entities
 from browsing_platform.server.services.file_tokens import generate_file_token
 from browsing_platform.server.services.media import get_media_by_posts, get_media_by_id
+from browsing_platform.server.services.media_part import get_media_part_by_media
 from browsing_platform.server.services.post import get_post_by_id, get_posts_by_accounts
 from browsing_platform.server.services.tag import get_tags_by_entity_ids, ITagWithType
 from db_loaders.db_intake import LOCAL_ARCHIVES_DIR_ALIAS
@@ -471,7 +472,36 @@ def get_enriched_media_by_id(
         tagged_accounts=tagged_accounts
     )
     nested_entities = transform_and_nest(flattened_entities, config)
+    _attach_media_parts(nested_entities, media)
     return nested_entities
+
+
+def _iter_nested_media(nested: ExtractedEntitiesNested):
+    """Yield every MediaAndAssociatedEntities reachable in the nested tree, wherever it landed
+    (top-level media, under a post, or under an account's posts)."""
+    yield from nested.media
+    posts = list(nested.posts)
+    for account in nested.accounts:
+        posts.extend(account.account_posts)
+    for post in posts:
+        yield from post.post_media
+
+
+def _attach_media_parts(nested: ExtractedEntitiesNested, media: Media) -> None:
+    """Fetch the media_parts (with their tags) for `media` and attach them to the matching
+    media node in the nested tree. Without this, saved parts vanish on refresh because the
+    enriched media payload never carried them."""
+    if media.id is None:
+        return
+    parts = get_media_part_by_media([media])
+    part_ids = [p.id for p in parts if p.id is not None]
+    part_tags = get_tags_by_entity_ids("media_part", part_ids) if part_ids else {}
+    for p in parts:
+        if p.id in part_tags:
+            p.tags = part_tags[p.id]
+    for media_node in _iter_nested_media(nested):
+        if media_node.id == media.id:
+            media_node.media_parts = parts
 
 
 def get_enriched_post_by_id(

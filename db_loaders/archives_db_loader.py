@@ -145,7 +145,7 @@ from tzlocal import get_localzone_name
 import root_anchor
 from db_loaders.db_intake import LOCAL_ARCHIVES_DIR_ALIAS, LOCAL_WACZ_ARCHIVES_DIR_ALIAS
 from db_loaders.db_intake import incorporate_structures_into_db
-from db_loaders.thumbnail_generator import generate_missing_thumbnails
+from db_loaders.thumbnail_generator import generate_missing_thumbnails, generate_missing_part_thumbnails
 from extractors.extract_photos import PhotoAcquisitionConfig
 from extractors.extract_videos import VideoAcquisitionConfig
 from extractors.session_attachments import get_session_attachments
@@ -1044,6 +1044,7 @@ if __name__ == "__main__":
         part_d_start = time.time()
         logger.info(f"Starting thumbnail generation{f' (limit: {args.limit})' if args.limit else ''}")
         asyncio.run(generate_missing_thumbnails(limit=args.limit))
+        asyncio.run(generate_missing_part_thumbnails(limit=args.limit))
         timings['D'] = time.time() - part_d_start
 
         # Summary

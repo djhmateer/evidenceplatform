@@ -6,7 +6,7 @@ export const deleteMediaPart = async (mediaPartId: number): Promise<void> => {
     return await server.post("media_part/" + mediaPartId, {}, HTTP_METHODS.delete);
 }
 
-export const saveMediaPart = async (mediaPart: IMediaPart): Promise<void> => {
+export const saveMediaPart = async (mediaPart: IMediaPart): Promise<IMediaPart> => {
     return await server.post("media_part/", mediaPart);
 }
 
