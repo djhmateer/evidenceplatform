@@ -6,7 +6,6 @@ import {
     CircularProgress,
     Collapse,
     Divider,
-    Fab,
     FormControl,
     IconButton,
     MenuItem,
@@ -140,6 +139,10 @@ export default function SearchPanel(props: SearchPanelProps) {
     // losing their display info (names/types) when the committed query changes.
     const tagObjectCache = useRef(new Map<number, ITagWithType>());
     const isDropdownOpen = useRef(false);
+    // Set when a search shortcut applies/clears advanced_filters, so the queryKey effect below
+    // skips its auto-open of the filters pane for that one update — shortcuts write the same
+    // URL params a shared link would, but the user didn't ask to see the builder.
+    const suppressFiltersAutoOpenRef = useRef(false);
 
     // ── Internal results state (auto-search mode only) ────────────────────────
 
@@ -180,7 +183,13 @@ export default function SearchPanel(props: SearchPanelProps) {
         );
         // Only ever open the panel here (e.g. when navigating to a URL that carries filters or
         // tags) — never force it closed, so a user-opened panel doesn't collapse on each search.
-        setShowFiltersPanel(prev => prev || !!query.advanced_filters || tagIds.length > 0);
+        // A shortcut-driven update suppresses this auto-open: read and clear the flag now so the
+        // closure captures it synchronously, before the deferred state updater runs.
+        const suppressAutoOpen = suppressFiltersAutoOpenRef.current;
+        suppressFiltersAutoOpenRef.current = false;
+        setShowFiltersPanel(prev =>
+            suppressAutoOpen ? prev : prev || !!query.advanced_filters || tagIds.length > 0
+        );
     }, [queryKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── Cleanup on unmount ────────────────────────────────────────────────────
@@ -263,6 +272,7 @@ export default function SearchPanel(props: SearchPanelProps) {
             ? Utils.Import.loadFromJsonLogic(newLogic, modeConfig) || getEmptyTree()
             : getEmptyTree();
         setAdvancedFiltersTree(newTree);
+        suppressFiltersAutoOpenRef.current = true;
         performSearch({advanced_filters: newLogic});
     };
 
@@ -272,25 +282,31 @@ export default function SearchPanel(props: SearchPanelProps) {
     const ResultsComponent = SEARCH_RESULT_RENDERERS[query.search_mode] ?? DefaultSearchResults;
 
     const modeSelector = showModeSelector ? (
-        <FormControl variant="standard" sx={{width: '200px'}}>
-            <Select
-                value={query.search_mode}
-                onChange={e => {
-                    const newMode = e.target.value as T_Search_Mode;
-                    setAdvancedFiltersTree(getEmptyTree());
-                    performSearch({search_mode: newMode, advanced_filters: null, page_size: defaultPageSize(newMode), sort_by: null, sort_order: null});
-                }}
-                sx={{
-                    width: '100%',
-                    '& .MuiSelect-select': {paddingLeft: '8px'},
-                    '::before': {borderBottom: 'none !important'},
-                }}
-            >
-                {SEARCH_MODES.map(m => (
-                    <MenuItem key={m.key} value={m.key}>{m.label}</MenuItem>
-                ))}
-            </Select>
-        </FormControl>
+        <Select
+            variant="standard"
+            disableUnderline
+            value={query.search_mode}
+            onChange={e => {
+                const newMode = e.target.value as T_Search_Mode;
+                setAdvancedFiltersTree(getEmptyTree());
+                performSearch({search_mode: newMode, advanced_filters: null, page_size: defaultPageSize(newMode), sort_by: null, sort_order: null});
+            }}
+            sx={{
+                flexShrink: 0,
+                minWidth: 128,
+                '& .MuiSelect-select': {
+                    py: 1,
+                    pl: 1.5,
+                    pr: '28px !important',
+                    fontWeight: 600,
+                    fontSize: '0.9rem',
+                },
+            }}
+        >
+            {SEARCH_MODES.map(m => (
+                <MenuItem key={m.key} value={m.key}>{m.label}</MenuItem>
+            ))}
+        </Select>
     ) : null;
 
     const sortOptions = SORT_OPTIONS[query.search_mode];
@@ -318,6 +334,47 @@ export default function SearchPanel(props: SearchPanelProps) {
         <Box className="query-builder-container" style={{padding: '10px 0'}}>
             <Box className="query-builder"><Builder {...builderProps}/></Box>
         </Box>
+    );
+
+    const submitSearch = () => {
+        searchHistory?.addSearch(query.search_mode, typedSearchTerm);
+        performSearch();
+    };
+
+    const syntaxHelpButton = (
+        <Tooltip title="Boolean search syntax" arrow disableInteractive>
+            <IconButton
+                size="small"
+                href="https://dev.mysql.com/doc/refman/8.4/en/fulltext-boolean.html"
+                target="_blank"
+                rel="noopener"
+                aria-label="Boolean search syntax help"
+                sx={{color: 'text.disabled'}}
+            >
+                <QuestionMarkIcon sx={{fontSize: '1rem'}}/>
+            </IconButton>
+        </Tooltip>
+    );
+
+    // Submit affordance lives inside the input's trailing edge: a compact icon on mobile,
+    // a labelled primary action (with the syntax helper alongside) on desktop.
+    const searchEndAdornment = isMobile ? (
+        <IconButton color="primary" onClick={submitSearch} aria-label="Search" sx={{p: '4px'}}>
+            <SearchIcon/>
+        </IconButton>
+    ) : (
+        <Stack direction="row" alignItems="center" gap={0.5} sx={{pl: 0.5}}>
+            {syntaxHelpButton}
+            <Button
+                variant="contained"
+                disableElevation
+                startIcon={<SearchIcon/>}
+                onClick={submitSearch}
+                sx={{textTransform: 'none', borderRadius: 1.5, boxShadow: 'none', flexShrink: 0, px: 2}}
+            >
+                Search
+            </Button>
+        </Stack>
     );
 
     const searchBarInput = searchHistory ? (
@@ -364,7 +421,7 @@ export default function SearchPanel(props: SearchPanelProps) {
                     </Tooltip>
                 </Box>
             )}
-            sx={{flex: 1}}
+            sx={{flex: 1, minWidth: 0}}
             renderInput={params => (
                 <OutlinedInput
                     {...params.InputProps}
@@ -375,31 +432,11 @@ export default function SearchPanel(props: SearchPanelProps) {
                             performSearch();
                         }
                     }}
-                    placeholder="Search..."
-                    sx={{width: '100%', '& .MuiOutlinedInput-input': {width: isMobile ? '100%' : 'calc(100% - 200px)'}}}
+                    placeholder="Search…"
                     size="small"
-                    endAdornment={
-                        isMobile ? (
-                            <IconButton color="primary" sx={{padding: '4px'}} onClick={() => {
-                                searchHistory?.addSearch(query.search_mode, typedSearchTerm);
-                                performSearch();
-                            }}>
-                                <SearchIcon/>
-                            </IconButton>
-                        ) : (
-                            <Stack direction="row" gap={2} alignItems="center">
-                                <Tooltip title="Boolean Search Syntax Explainer" arrow disableInteractive>
-                                    <Fab color="info"
-                                         href="https://dev.mysql.com/doc/refman/8.4/en/fulltext-boolean.html"
-                                         size="small" target="_blank"
-                                         sx={{width: 24, height: 24, minHeight: 24}}>
-                                        <QuestionMarkIcon fontSize="small" sx={{fontSize: '1em'}}/>
-                                    </Fab>
-                                </Tooltip>
-                                {modeSelector}
-                            </Stack>
-                        )
-                    }
+                    fullWidth
+                    sx={{'& .MuiOutlinedInput-notchedOutline': {border: 'none'}}}
+                    endAdornment={searchEndAdornment}
                 />
             )}
         />
@@ -410,17 +447,44 @@ export default function SearchPanel(props: SearchPanelProps) {
             onKeyDown={e => {
                 if (e.key === 'Enter') performSearch();
             }}
-            placeholder="Search..."
+            placeholder="Search…"
             size="small"
-            sx={{flex: 1}}
-            endAdornment={
-                isMobile ? (
-                    <IconButton color="primary" sx={{padding: '4px'}} onClick={() => performSearch()}>
-                        <SearchIcon/>
-                    </IconButton>
-                ) : (modeSelector || undefined)
-            }
+            fullWidth
+            sx={{flex: 1, minWidth: 0, '& .MuiOutlinedInput-notchedOutline': {border: 'none'}}}
+            endAdornment={searchEndAdornment}
         />
+    );
+
+    // The mode selector, query field, and submit action read as one control: a single
+    // bordered pill that lights up on focus. The mode selector leads (scope first), the
+    // query fills the middle, the submit action caps the trailing edge.
+    const searchBar = (
+        <Box
+            sx={{
+                display: 'flex',
+                alignItems: 'center',
+                flex: 1,
+                minWidth: 0,
+                pr: 0.5,
+                border: '1px solid',
+                borderColor: 'divider',
+                borderRadius: 2,
+                bgcolor: 'background.paper',
+                transition: 'border-color .15s ease, box-shadow .15s ease',
+                '&:focus-within': {
+                    borderColor: 'primary.main',
+                    boxShadow: theme => `0 0 0 1px ${theme.palette.primary.main}`,
+                },
+            }}
+        >
+            {!isMobile && modeSelector && (
+                <>
+                    {modeSelector}
+                    <Divider orientation="vertical" flexItem sx={{my: 1}}/>
+                </>
+            )}
+            {searchBarInput}
+        </Box>
     );
 
     return (
@@ -432,24 +496,14 @@ export default function SearchPanel(props: SearchPanelProps) {
             >
                 {/* Search bar */}
                 <Stack direction="column" gap={isMobile ? 0 : 1}>
-                    <Stack direction="row" spacing={2} sx={{width: '100%', minWidth: 0}}>
-                        {searchBarInput}
-                        {!isMobile && (
-                            <Tooltip title="Search" arrow disableInteractive>
-                                <IconButton color="primary" sx={{padding: '8px'}} onClick={() => {
-                                    searchHistory?.addSearch(query.search_mode, typedSearchTerm);
-                                    performSearch();
-                                }}>
-                                    <SearchIcon/>
-                                </IconButton>
-                            </Tooltip>
-                        )}
+                    <Stack direction="row" spacing={1.5} alignItems="center" sx={{width: '100%', minWidth: 0}}>
+                        {searchBar}
                         {showAdvancedFiltersFeature && !isMobile && (
-                            <Tooltip title="Advanced Filtering" arrow disableInteractive>
+                            <Tooltip title="Advanced filtering" arrow disableInteractive>
                                 <ToggleButton
                                     value="check"
                                     selected={showFiltersPanel}
-                                    color="primary" sx={{padding: '8px'}}
+                                    color="primary" sx={{borderRadius: 2, p: '8px'}}
                                     onClick={() => setShowFiltersPanel(p => !p)}
                                 >
                                     <FilterListIcon/>
@@ -481,6 +535,24 @@ export default function SearchPanel(props: SearchPanelProps) {
                     )}
                 </Stack>
 
+                {/* Tag filter — always visible directly under the search bar */}
+                {query.search_mode !== 'archive_sessions' && (
+                    <Box sx={{margin: isMobile ? '0 1em' : 0}}>
+                        <TagFilterBar
+                            tagIds={query.tag_ids || []}
+                            tagFilterMode={query.tag_filter_mode || 'any'}
+                            selectedTagObjects={tagFilterObjects}
+                            tagScopes={resolveScopes(query.tag_scopes, SEARCH_MODE_TO_ENTITY[query.search_mode])}
+                            entity={SEARCH_MODE_TO_ENTITY[query.search_mode]}
+                            onChange={(tagIds, mode, tagObjects, scopes) => {
+                                tagObjects.forEach(t => tagObjectCache.current.set(t.id, t));
+                                setTagFilterObjects(tagObjects);
+                                performSearch({tag_ids: tagIds, tag_filter_mode: mode, tag_scopes: scopes});
+                            }}
+                        />
+                    </Box>
+                )}
+
                 {/* Advanced filters */}
                 {showAdvancedFiltersFeature && (
                     <Collapse in={showFiltersPanel} timeout="auto" unmountOnExit>
@@ -499,22 +571,6 @@ export default function SearchPanel(props: SearchPanelProps) {
                                     performSearch();
                                 }
                             }}>
-                                {query.search_mode !== 'archive_sessions' && (
-                                    <Box sx={{margin: isMobile ? '0 1em' : 0}}>
-                                        <TagFilterBar
-                                            tagIds={query.tag_ids || []}
-                                            tagFilterMode={query.tag_filter_mode || 'any'}
-                                            selectedTagObjects={tagFilterObjects}
-                                            tagScopes={resolveScopes(query.tag_scopes, SEARCH_MODE_TO_ENTITY[query.search_mode])}
-                                            entity={SEARCH_MODE_TO_ENTITY[query.search_mode]}
-                                            onChange={(tagIds, mode, tagObjects, scopes) => {
-                                                tagObjects.forEach(t => tagObjectCache.current.set(t.id, t));
-                                                setTagFilterObjects(tagObjects);
-                                                performSearch({tag_ids: tagIds, tag_filter_mode: mode, tag_scopes: scopes});
-                                            }}
-                                        />
-                                    </Box>
-                                )}
                                 <Box sx={{
                                     '& .qb-lite': {
                                         '& .group--drag-handler, & .group--actions': {
