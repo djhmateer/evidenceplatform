@@ -57,11 +57,6 @@ New endpoint accepts an uploaded image, computes pHash locally, runs the Hamming
 results in the existing `SearchResult` shape → rendered by `MediaSearchResults.tsx`. Add the
 upload/paste affordance to `SearchPanel.tsx`.
 
-## Bonus
-
-Instantly enables **cross-archive deduplication** and "is this exact image already in the archive?"
-provenance checks across the whole corpus.
-
 ## Effort
 
 ~1 migration + one `generate_missing_hashes()` worker + one search endpoint + an upload box.
