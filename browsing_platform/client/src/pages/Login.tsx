@@ -19,9 +19,16 @@ import {
 import {createTheme, ThemeProvider} from '@mui/material/styles';
 import {ArrowBack, LocalFlorist, Visibility, VisibilityOff} from "@mui/icons-material";
 import {useNavigate, useSearchParams} from "react-router";
-import zxcvbn from 'zxcvbn';
 
 const darkTheme = createTheme({palette: {mode: 'dark'}});
+
+// zxcvbn is ~820KB minified — by far the heaviest dependency on this page. It's
+// only needed for the password-strength meter in the change-password step, so
+// load it on demand instead of baking it into the initial (eager) Login bundle.
+type ZxcvbnFn = (password: string) => {score: number};
+let zxcvbnPromise: Promise<ZxcvbnFn> | null = null;
+const loadZxcvbn = (): Promise<ZxcvbnFn> =>
+    (zxcvbnPromise ??= import('zxcvbn').then(m => ((m as any).default ?? m) as ZxcvbnFn));
 
 type LoginStep = "password" | "verify_totp" | "change_password" | "setup_totp_qr";
 
@@ -49,7 +56,25 @@ export default function Login() {
     const [newPassword, setNewPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
     const [showNewPassword, setShowNewPassword] = useState(false);
-    const passwordStrength = newPassword ? zxcvbn(newPassword) : null;
+    const [passwordStrength, setPasswordStrength] = useState<{score: number} | null>(null);
+
+    // Compute strength asynchronously once zxcvbn has loaded. While it's loading
+    // passwordStrength stays null, which keeps the submit button disabled (see
+    // the `!passwordStrength` guard below) — so a too-weak password can't slip
+    // through during the brief first-load window.
+    useEffect(() => {
+        if (!newPassword) {
+            setPasswordStrength(null);
+            return;
+        }
+        let cancelled = false;
+        loadZxcvbn().then(zxcvbn => {
+            if (!cancelled) setPasswordStrength(zxcvbn(newPassword));
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [newPassword]);
 
     // Setup TOTP step
     const [qrCode, setQrCode] = useState("");
