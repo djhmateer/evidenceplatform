@@ -146,6 +146,7 @@ import root_anchor
 from db_loaders.db_intake import LOCAL_ARCHIVES_DIR_ALIAS, LOCAL_WACZ_ARCHIVES_DIR_ALIAS
 from db_loaders.db_intake import incorporate_structures_into_db
 from db_loaders.thumbnail_generator import generate_missing_thumbnails, generate_missing_part_thumbnails
+from db_loaders.phash_generator import generate_missing_hashes, project_runtime, dump_profile, MAX_CONCURRENT
 from extractors.extract_photos import PhotoAcquisitionConfig
 from extractors.extract_videos import VideoAcquisitionConfig
 from extractors.session_attachments import get_session_attachments
@@ -984,7 +985,7 @@ if __name__ == "__main__":
 
     import argparse
 
-    valid_stages = ["register", "parse", "extract", "full", "rerun", "add_attachments", "clear_errors", "add_metadata"]
+    valid_stages = ["register", "parse", "extract", "full", "rerun", "phash", "add_attachments", "clear_errors", "add_metadata"]
 
     arg_parser = argparse.ArgumentParser(description="Archive Database Loader")
     arg_parser.add_argument("stage", nargs="?", choices=valid_stages,
@@ -996,6 +997,12 @@ if __name__ == "__main__":
     arg_parser.add_argument("--filter", type=str, default=None,
                             help="Only process archives whose directory name matches this substring or glob "
                                  "(e.g. 'eran' or 'eran_2026*'). Applies to register/full/rerun.")
+    arg_parser.add_argument("--project-images", type=int, default=None,
+                            help="(phash stage) Extrapolate the measured per-image time to this many "
+                                 "production images and print the estimated indexing runtime.")
+    arg_parser.add_argument("--project-videos", type=int, default=None,
+                            help="(phash stage) Extrapolate the measured per-video time to this many "
+                                 "production videos and print the estimated indexing runtime.")
     args = arg_parser.parse_args()
 
     if args.archives_dir:
@@ -1047,13 +1054,37 @@ if __name__ == "__main__":
         asyncio.run(generate_missing_part_thumbnails(limit=args.limit))
         timings['D'] = time.time() - part_d_start
 
+        # Part E: Generate perceptual hashes for any media missing them (reverse image search)
+        part_e_start = time.time()
+        logger.info(f"Starting perceptual hash indexing{f' (limit: {args.limit})' if args.limit else ''}")
+        asyncio.run(generate_missing_hashes(limit=args.limit))
+        timings['E'] = time.time() - part_e_start
+
         # Summary
         total_elapsed = time.time() - full_start
         logger.info(
             f"Full pipeline complete in {total_elapsed:.1f}s - "
             f"Part A: {timings['A']:.1f}s, Part B: {timings['B']:.1f}s, "
-            f"Part C: {timings['C']:.1f}s, Part D: {timings['D']:.1f}s"
+            f"Part C: {timings['C']:.1f}s, Part D: {timings['D']:.1f}s, Part E: {timings['E']:.1f}s"
         )
+    elif stage == "phash":
+        stats = asyncio.run(generate_missing_hashes(limit=args.limit))
+        projection = None
+        if args.project_images is not None or args.project_videos is not None:
+            projection = project_runtime(
+                stats, args.project_images or 0, args.project_videos or 0)
+            logger.info(
+                f"Projected production indexing for {projection['projected_images']} images + "
+                f"{projection['projected_videos']} videos "
+                f"(basis: {projection['basis_avg_image_ms']} ms/img, "
+                f"{projection['basis_avg_video_ms']} ms/vid):\n"
+                f"  serial:            ~{projection['est_serial_hours']} h\n"
+                f"  {MAX_CONCURRENT}-worker parallel: ~{projection['est_parallel_hours']} h\n"
+                f"  {projection['note']}"
+            )
+        if stats.items:
+            profile_path = dump_profile(stats, projection)
+            logger.info(f"Wrote perceptual-hash profile to {profile_path}")
     elif stage == "add_attachments":
         add_missing_attachments()
     elif stage == "add_metadata":

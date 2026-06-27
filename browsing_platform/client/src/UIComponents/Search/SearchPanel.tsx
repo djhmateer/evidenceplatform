@@ -20,6 +20,8 @@ import {
 } from '@mui/material';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import SearchIcon from '@mui/icons-material/Search';
+import ImageSearchIcon from '@mui/icons-material/ImageSearch';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
 import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 import QuestionMarkIcon from '@mui/icons-material/QuestionMark';
 import HistoryIcon from '@mui/icons-material/History';
@@ -41,6 +43,7 @@ import {
     ISearchQuery,
     SEARCH_MODE_TO_ENTITY,
     SEARCH_MODES,
+    searchByImage,
     searchData,
     SearchResult,
     SORT_OPTIONS,
@@ -151,9 +154,64 @@ export default function SearchPanel(props: SearchPanelProps) {
     const [internalTagsMap, setInternalTagsMap] = useState<Record<number, ITagWithType[]>>({});
     const abortRef = useRef<AbortController | null>(null);
 
-    const results = isAutoSearch ? internalResults : props.results!;
-    const isLoading = isAutoSearch ? internalIsLoading : props.isLoading!;
-    const tagsMap = isAutoSearch ? internalTagsMap : (props.tagsMap ?? {});
+    // ── Image-search state (mode === 'image') ─────────────────────────────────
+    const isImageMode = query.search_mode === 'image';
+    const [imageResults, setImageResults] = useState<SearchResult[]>([]);
+    const [imageLoading, setImageLoading] = useState(false);
+    const [imagePreview, setImagePreview] = useState<string | null>(null);
+    const [imageError, setImageError] = useState<string | null>(null);
+    const [dragActive, setDragActive] = useState(false);
+    const imageReqRef = useRef(0);                       // ignore out-of-order responses
+    const imagePreviewUrlRef = useRef<string | null>(null);  // revoke prior object URLs
+
+    const runImageSearch = useCallback((file: File | Blob) => {
+        if (imagePreviewUrlRef.current) URL.revokeObjectURL(imagePreviewUrlRef.current);
+        const url = URL.createObjectURL(file);
+        imagePreviewUrlRef.current = url;
+        setImagePreview(url);
+        setImageError(null);
+        setImageLoading(true);
+        const seq = ++imageReqRef.current;
+        searchByImage(file, {pageSize: query.page_size})
+            .then(r => {
+                if (seq !== imageReqRef.current) return;
+                setImageResults(r);
+                setImageLoading(false);
+            })
+            .catch((e: any) => {
+                if (seq !== imageReqRef.current) return;
+                setImageError(e?.message || 'Image search failed');
+                setImageResults([]);
+                setImageLoading(false);
+            });
+    }, [query.page_size]);
+
+    const handleImageFiles = useCallback((files: FileList | null) => {
+        const f = files?.[0];
+        if (f) runImageSearch(f);
+    }, [runImageSearch]);
+
+    // In image mode, Ctrl/Cmd+V searches the pasted image from anywhere on the page — no need to
+    // focus a field first. (There is no text input in this mode, so a document-level listener is
+    // safe.)
+    useEffect(() => {
+        if (!isImageMode) return;
+        const onPaste = (e: ClipboardEvent) => {
+            const item = Array.from(e.clipboardData?.items || []).find(i => i.type.startsWith('image/'));
+            const f = item?.getAsFile();
+            if (f) runImageSearch(f);
+        };
+        document.addEventListener('paste', onPaste);
+        return () => document.removeEventListener('paste', onPaste);
+    }, [isImageMode, runImageSearch]);
+
+    useEffect(() => () => {
+        if (imagePreviewUrlRef.current) URL.revokeObjectURL(imagePreviewUrlRef.current);
+    }, []);
+
+    const results = isImageMode ? imageResults : (isAutoSearch ? internalResults : props.results!);
+    const isLoading = isImageMode ? imageLoading : (isAutoSearch ? internalIsLoading : props.isLoading!);
+    const tagsMap = isAutoSearch && !isImageMode ? internalTagsMap : (props.tagsMap ?? {});
 
     // ── Sync when parent query changes (URL back/forward navigation) ──────────
 
@@ -225,7 +283,7 @@ export default function SearchPanel(props: SearchPanelProps) {
     doSearchRef.current = doSearch;
 
     useEffect(() => {
-        if (!isAutoSearch) return;
+        if (!isAutoSearch || query.search_mode === 'image') return;
         if (!typedSearchTerm.trim()) {
             setInternalResults([]);
             return;
@@ -248,10 +306,11 @@ export default function SearchPanel(props: SearchPanelProps) {
 
     const performSearch = useCallback((overrides?: Partial<ISearchQuery>) => {
         const currentMode = overrides?.search_mode ?? query.search_mode;
-        const filters = Utils.Export.jsonLogicFormat(advancedFiltersTree, {
+        // Image search has no text term / filters — switching to it just commits the mode.
+        const filters = currentMode === 'image' ? null : (Utils.Export.jsonLogicFormat(advancedFiltersTree, {
             ...InitialConfig,
             fields: ADVANCED_FILTERS_CONFIG[currentMode],
-        }).logic ?? null;
+        }).logic ?? null);
         const newQuery: ISearchQuery = {
             ...query,
             search_term: typedSearchTerm,
@@ -259,7 +318,7 @@ export default function SearchPanel(props: SearchPanelProps) {
             page_number: 1,
             ...overrides,
         };
-        if (isAutoSearch) {
+        if (isAutoSearch && currentMode !== 'image') {
             doSearch(newQuery);
         } else {
             onSearch(newQuery);
@@ -455,9 +514,50 @@ export default function SearchPanel(props: SearchPanelProps) {
         />
     );
 
+    // Image-search affordance. The drop zone never opens the file dialog on click — that would steal
+    // focus and block pasting. The dialog opens only from the explicit Upload button (a MUI
+    // `Button component="label"`); paste works anywhere (document listener above); drag-drop lands on
+    // the zone, which highlights while a file hovers.
+    const imageSearchInput = (
+        <Box
+            onDragOver={(e: React.DragEvent) => { e.preventDefault(); setDragActive(true); }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={(e: React.DragEvent) => {
+                e.preventDefault();
+                setDragActive(false);
+                handleImageFiles(e.dataTransfer.files);
+            }}
+            sx={{
+                flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 1,
+                pl: 1.5, pr: 0.5, py: 0.5, borderRadius: 1.5,
+                bgcolor: dragActive ? 'action.hover' : 'transparent',
+                transition: 'background-color .15s ease',
+            }}
+        >
+            <ImageSearchIcon fontSize="small" sx={{color: 'text.secondary', flexShrink: 0}}/>
+            <Typography variant="body2" color="text.secondary" noWrap sx={{flex: 1, minWidth: 0}}>
+                {dragActive
+                    ? 'Drop to search'
+                    : (isMobile ? 'Search by image' : 'Drop or paste an image to search')}
+            </Typography>
+            <Button
+                component="label"
+                size="small"
+                variant="outlined"
+                startIcon={<UploadFileIcon/>}
+                sx={{flexShrink: 0, textTransform: 'none', borderRadius: 1.5}}
+            >
+                Upload
+                <input type="file" accept="image/*" hidden
+                       onChange={e => { handleImageFiles(e.target.files); e.target.value = ''; }}/>
+            </Button>
+        </Box>
+    );
+
     // The mode selector, query field, and submit action read as one control: a single
     // bordered pill that lights up on focus. The mode selector leads (scope first), the
-    // query fills the middle, the submit action caps the trailing edge.
+    // query fills the middle, the submit action caps the trailing edge. In image-search mode the
+    // query field is replaced by the upload affordance.
     const searchBar = (
         <Box
             sx={{
@@ -483,7 +583,7 @@ export default function SearchPanel(props: SearchPanelProps) {
                     <Divider orientation="vertical" flexItem sx={{my: 1}}/>
                 </>
             )}
-            {searchBarInput}
+            {isImageMode ? imageSearchInput : searchBarInput}
         </Box>
     );
 
@@ -498,7 +598,7 @@ export default function SearchPanel(props: SearchPanelProps) {
                 <Stack direction="column" gap={isMobile ? 0 : 1}>
                     <Stack direction="row" spacing={1.5} alignItems="center" sx={{width: '100%', minWidth: 0}}>
                         {searchBar}
-                        {showAdvancedFiltersFeature && !isMobile && (
+                        {showAdvancedFiltersFeature && !isMobile && !isImageMode && (
                             <Tooltip title="Advanced filtering" arrow disableInteractive>
                                 <ToggleButton
                                     value="check"
@@ -519,7 +619,7 @@ export default function SearchPanel(props: SearchPanelProps) {
                             sx={{padding: isMobile ? '1em' : '0'}}
                         >
                             {modeSelector}
-                            {showAdvancedFiltersFeature && (
+                            {showAdvancedFiltersFeature && !isImageMode && (
                                 <Tooltip title="Advanced Filtering" arrow disableInteractive>
                                     <ToggleButton
                                         value="check"
@@ -535,8 +635,29 @@ export default function SearchPanel(props: SearchPanelProps) {
                     )}
                 </Stack>
 
+                {/* Image-search preview + match summary */}
+                {isImageMode && (imagePreview || imageError) && (
+                    <Stack direction="row" spacing={1.5} alignItems="center"
+                           sx={{px: isMobile ? '1em' : 0}}>
+                        {imagePreview && (
+                            <Box component="img" src={imagePreview} alt="query"
+                                 sx={{width: 56, height: 56, objectFit: 'cover', borderRadius: 1,
+                                      border: '1px solid', borderColor: 'divider', flexShrink: 0}}/>
+                        )}
+                        <Typography variant="body2" color={imageError ? 'error' : 'text.secondary'}>
+                            {imageError
+                                ? imageError
+                                : isLoading
+                                    ? 'Searching…'
+                                    : results.length === 0
+                                        ? 'No matches found'
+                                        : `${results.length} match${results.length === 1 ? '' : 'es'}, best first`}
+                        </Typography>
+                    </Stack>
+                )}
+
                 {/* Tag filter — always visible directly under the search bar */}
-                {query.search_mode !== 'archive_sessions' && (
+                {query.search_mode !== 'archive_sessions' && !isImageMode && (
                     <Box sx={{margin: isMobile ? '0 1em' : 0}}>
                         <TagFilterBar
                             tagIds={query.tag_ids || []}
@@ -554,7 +675,7 @@ export default function SearchPanel(props: SearchPanelProps) {
                 )}
 
                 {/* Advanced filters */}
-                {showAdvancedFiltersFeature && (
+                {showAdvancedFiltersFeature && !isImageMode && (
                     <Collapse in={showFiltersPanel} timeout="auto" unmountOnExit>
                         <Stack
                             direction="column"
@@ -597,7 +718,7 @@ export default function SearchPanel(props: SearchPanelProps) {
                 )}
 
                 {/* Shortcuts + Sort By + Tag Mode toggle */}
-                {(SearchShortcuts || sortSelector || (showTaggingMode && SEARCH_MODE_TO_ENTITY[query.search_mode])) && (
+                {!isImageMode && (SearchShortcuts || sortSelector || (showTaggingMode && SEARCH_MODE_TO_ENTITY[query.search_mode])) && (
                     <Stack
                         direction="row"
                         justifyContent="space-between"

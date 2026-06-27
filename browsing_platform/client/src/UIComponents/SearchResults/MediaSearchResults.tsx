@@ -1,5 +1,7 @@
 import React, {useState, useRef, useEffect} from 'react';
-import {Box, Checkbox, Chip, Fade, Stack, Typography, useMediaQuery} from '@mui/material';
+import {Box, Button, Checkbox, Chip, Collapse, Fade, Stack, Typography, useMediaQuery} from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import dayjs from 'dayjs';
 import {SearchResult} from '../../services/DataFetcher';
 import {ITagWithType} from '../../types/tags';
@@ -205,10 +207,14 @@ function MediaSearchResultCell({result, tags, selected, onToggleSelected, largeI
     );
 }
 
-export default function MediaSearchResults({results, tagsMap, selectedIds, onToggleSelected, largeIcons}: SearchResultsProps) {
-    if (results.length === 0) {
-        return <Box>No results found.</Box>;
-    }
+// Reverse-image-search results carry a Hamming `match_distance` (0..64, lower = better). pHash
+// survives recompression/resize/labels at small distances, while the server's generous 18-bit cut
+// also lets weaker, degraded matches through. We split at the doc's near-duplicate boundary
+// (01-perceptual-hash-search.md): <=10 is a "good" match shown by default; 11..18 is the weak band,
+// collapsed under an expander so it doesn't bury the strong hits.
+const GOOD_MATCH_MAX_DISTANCE = 15;
+
+function MediaResultsGrid({results, tagsMap, selectedIds, onToggleSelected, largeIcons}: SearchResultsProps) {
     return (
         <Box
             sx={{
@@ -230,5 +236,67 @@ export default function MediaSearchResults({results, tagsMap, selectedIds, onTog
                 />
             ))}
         </Box>
+    );
+}
+
+export default function MediaSearchResults(props: SearchResultsProps) {
+    const {results} = props;
+    const [showAdditional, setShowAdditional] = useState(false);
+
+    // Reset the expander whenever a new result set arrives (e.g. a fresh image search), so a previous
+    // expansion doesn't carry over and reveal a different query's weak matches by default.
+    const resultsKey = results.map(r => r.id).join(',');
+    useEffect(() => { setShowAdditional(false); }, [resultsKey]);
+
+    if (results.length === 0) {
+        return <Box>No results found.</Box>;
+    }
+
+    // Only reverse-image-search results carry match_distance; plain media search renders unsegmented.
+    const isImageSearch = results.some(r => typeof r.metadata?.match_distance === 'number');
+    if (!isImageSearch) {
+        return <MediaResultsGrid {...props} />;
+    }
+
+    const distOf = (r: typeof results[number]) =>
+        typeof r.metadata?.match_distance === 'number' ? r.metadata.match_distance : Infinity;
+    const good = results.filter(r => distOf(r) <= GOOD_MATCH_MAX_DISTANCE);
+    const additional = results.filter(r => distOf(r) > GOOD_MATCH_MAX_DISTANCE);
+
+    // No strong matches: surface the weak band directly (no point hiding everything behind an
+    // expander when there's nothing else to show), with a note that the matches are low-similarity.
+    if (good.length === 0) {
+        return (
+            <Stack gap={1}>
+                <Typography variant="body2" color="text.secondary">
+                    No strong matches — showing {additional.length} lower-similarity{' '}
+                    {additional.length === 1 ? 'match' : 'matches'}.
+                </Typography>
+                <MediaResultsGrid {...props} results={additional} />
+            </Stack>
+        );
+    }
+
+    return (
+        <Stack gap={1}>
+            <MediaResultsGrid {...props} results={good} />
+            {additional.length > 0 && (
+                <>
+                    <Button
+                        onClick={() => setShowAdditional(s => !s)}
+                        startIcon={showAdditional ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                        sx={{alignSelf: 'flex-start', textTransform: 'none', mt: 0.5}}
+                        color="inherit"
+                    >
+                        {showAdditional
+                            ? 'Hide lower-similarity matches'
+                            : `Show ${additional.length} more lower-similarity ${additional.length === 1 ? 'match' : 'matches'}`}
+                    </Button>
+                    <Collapse in={showAdditional} timeout="auto" unmountOnExit>
+                        <MediaResultsGrid {...props} results={additional} />
+                    </Collapse>
+                </>
+            )}
+        </Stack>
     );
 }

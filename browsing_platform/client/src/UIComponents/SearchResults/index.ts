@@ -11,6 +11,7 @@ export const SEARCH_RESULT_RENDERERS: Partial<Record<T_Search_Mode, React.FC<Sea
     accounts: AccountSearchResults,
     posts: PostSearchResults,
     media: MediaSearchResults,
+    image: MediaSearchResults,  // reverse image search returns media rows
     archive_sessions: ArchiveSessionSearchResults,
 };
 

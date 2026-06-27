@@ -5,6 +5,11 @@
 
 **Verdict: trivially plausible. Zero ML, zero lock-in, CPU-only end-to-end. Build first.**
 
+> **Implementable immediately, before any FAISS/ONNX setup.** This feature needs nothing beyond the
+> current stack — no ANN library, no neural runtime, no MySQL `VECTOR` type, no DB upgrade. Hashes are
+> stored as plain `BIGINT` columns and searched by brute-force Hamming distance in NumPy. FAISS is
+> only introduced later, by Feature `02`.
+
 ## Goal
 
 Given an uploaded photo, find the `media` row(s) it matches — robust to resize, recompression,

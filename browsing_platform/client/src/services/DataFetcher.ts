@@ -182,6 +182,7 @@ export const SEARCH_MODES: readonly { key: string, label: string }[] = [
     {key: 'accounts', label: 'Accounts'},
     {key: 'posts', label: 'Posts'},
     {key: 'media', label: 'Media'},
+    {key: 'image', label: 'Image Search'},
     {key: 'archive_sessions', label: 'Archive Sessions'},
 ] as const;
 
@@ -235,6 +236,9 @@ const disabled_operators_by_type: { [key: string]: string[] } = {
 }
 
 export const ADVANCED_FILTERS_CONFIG: { [key: T_Search_Mode]: Fields } = {
+    // Image search has no advanced filters (query is an uploaded image); kept as an empty config so
+    // ADVANCED_FILTERS_CONFIG[mode] is never undefined for the query-builder helpers.
+    'image': {},
     'accounts': {
         url_parts: {
             label: 'User Name',
@@ -364,6 +368,21 @@ export const searchData = async (
     options: { signal: AbortSignal }
 ): Promise<SearchResult[]> => {
     return await server.post("search/", query, HTTP_METHODS.post, {abortSignal: options.signal});
+}
+
+// Reverse image search: upload a photo (or a video screenshot) and get matching media, nearest
+// first, in the same SearchResult shape as searchData → rendered by MediaSearchResults. The match
+// tolerance is fixed server-side (deliberately not exposed to the user).
+export const searchByImage = async (
+    file: File | Blob,
+    opts?: { pageNumber?: number; pageSize?: number }
+): Promise<SearchResult[]> => {
+    const fd = new FormData();
+    fd.append('file', file, (file as File).name || 'upload.png');
+    const params = new URLSearchParams();
+    params.set('page_number', String(opts?.pageNumber ?? 1));
+    params.set('page_size', String(opts?.pageSize ?? defaultPageSize('media')));
+    return await server.postFormData(`search/image?${params.toString()}`, fd);
 }
 
 export const fetchRelatedTagStats = async (accountId: number): Promise<ITagStat[]> => {

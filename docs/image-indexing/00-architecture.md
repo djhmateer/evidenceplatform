@@ -58,13 +58,24 @@ At 1M–3M, brute-force cosine is too slow for interactive similarity search (br
 for *hashes* — see `01`). So:
 
 - **Source of truth:** store each vector as a `float32` **BLOB** (+ `model_version`) in a
-  per-feature table. Portable; avoids any dependency on the MySQL 9 `VECTOR` type (server version
-  is currently unconfirmed — **do not assume it**).
-- **Query index:** build an **HNSW** ANN index (FAISS `IndexHNSWFlat` or `hnswlib`) from the BLOBs,
-  persisted to disk, loaded at FastAPI startup, with incremental `add` for new media.
-  3M × 512-d `float32` ≈ 6 GB raw — fits in server RAM; HNSW query is sub-10 ms on CPU.
+  per-feature table. We deliberately do **not** use MySQL's `VECTOR` type. It would require MySQL
+  9.x (an *Innovation* release with a short support window), and even there the **Community** server
+  only *stores* vectors — `DISTANCE()`, vector indexes, and ANN search are **HeatWave-only**. A plain
+  `float32` BLOB is more portable (reads on any MySQL — including the 8.4 LTS line — or any other DB)
+  and loses nothing here, because nearest-neighbor search runs in **FAISS** regardless. MySQL is just
+  durable storage for the bytes.
+- **Query index:** build an **HNSW** ANN index with **FAISS** (`IndexHNSWFlat`, wrapped in
+  `IndexIDMap` so it returns `media_id`) from the BLOBs. Lifecycle: build once → `faiss.write_index`
+  to disk → `faiss.read_index` at FastAPI startup → incremental `index.add(...)` for new media. The
+  index is **resident in RAM at query time** — the disk file is a fast-reload snapshot, not off-disk
+  search. 3M × 512-d `float32` ≈ 6 GB raw (~8–12 GB with HNSW graph links) — fits in server RAM;
+  HNSW query is sub-10 ms on CPU. If the corpus ever outgrows RAM, FAISS Product Quantization
+  (`IndexIVFPQ`, ~30–60× smaller) or memory-mapped IVF indexes extend the ceiling well before a
+  dedicated vector database is warranted.
 - Because the index is **derived** from the BLOBs, it can be rebuilt at any time (model swap,
-  corruption, dimension change). This is what makes the design lock-in-proof and operationally safe.
+  corruption, dimension change) — that rebuild is the **recovery/safety path**, not the routine
+  startup cost (normal startup just loads the persisted snapshot). This is what makes the design
+  lock-in-proof and operationally safe.
 
 Normalize vectors (L2) at write time so cosine similarity == inner product.
 
@@ -88,7 +99,8 @@ periodically if desired).
 ## Build order
 
 1. **`01` Perceptual hash** — smallest, immediate dedup/provenance value; validates the pipeline
-   stage + image-upload search flow.
+   stage + image-upload search flow. **Buildable right now** on the current stack: no FAISS, no ONNX,
+   no MySQL change — just an `imagehash` pass and a NumPy Hamming scan.
 2. **`02` CLIP** — establishes the ONNX runtime (S2) and the ANN index lifecycle (S3) reused by `04`.
 3. **`03` Captions** — reuses `02`'s text encoder and the existing fulltext search.
 4. **`04` Faces** — reuses S2/S3; largest UI surface; gate behind the ethics/consent review.
@@ -107,9 +119,13 @@ periodically if desired).
 - **Lock-in drill:** delete and rebuild an ANN index purely from the DB BLOBs; confirm parity —
   proves the index is a disposable cache and embeddings are recoverable.
 
+## Settled decisions
+
+- **Vector storage:** `float32` BLOB in MySQL; the MySQL `VECTOR` type is **not** used (see S3). The
+  current MySQL version is therefore a non-issue for this work — no DB upgrade is required.
+- **ANN library:** **FAISS** (`IndexHNSWFlat`); `hnswlib` was the alternative but FAISS wins on
+  on-disk options and quantization (`IndexIVFPQ`) headroom at 3M+.
+
 ## Open items to confirm during execution
 
-- Exact **MySQL server version** (decides whether `VECTOR` is even an option; design does not rely
-  on it).
-- **FAISS vs hnswlib** for the ANN index (both fine; FAISS has richer on-disk options at 3M+).
 - Rented-GPU provider + the media→box→DB **data-transfer mechanics** (extends `utils/data_transfers/`).
