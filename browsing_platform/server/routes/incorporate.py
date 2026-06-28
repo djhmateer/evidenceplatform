@@ -5,16 +5,31 @@ import os
 import threading
 
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 
 
 class IncorporationMode(str, Enum):
     register = "register"
     rerun = "rerun"
 
-from browsing_platform.server.services.incorporation_service import manager, _run_incorporation, incorporation_ws
+
+class ResetStatusRequest(BaseModel):
+    target_status: Literal["pending", "parsed"]
+    id_min: Optional[int] = None
+    id_max: Optional[int] = None
+    archiving_from: Optional[str] = None  # ISO datetime, inclusive lower bound
+    archiving_to: Optional[str] = None    # ISO datetime, inclusive upper bound
+    dry_run: bool = True
+    confirmation: Optional[str] = None    # must equal "I am sure!" when dry_run is False
+
+
+RESET_CONFIRMATION_PHRASE = "I am sure!"
+
+from browsing_platform.server.rate_limiter import _get_real_ip
+from browsing_platform.server.services.incorporation_service import manager, _run_incorporation, incorporation_ws, reset_incorporation_status
 from browsing_platform.server.services.permissions import auth_admin_access
 from browsing_platform.server.services.token_manager import check_token
 from utils import db
@@ -51,11 +66,7 @@ def start(
     permissions=Depends(auth_admin_access),
 ):
     user_id = getattr(permissions, "user_id", None)
-    client_ip = (
-        request.headers.get("X-Real-IP")
-        or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-        or (request.client.host if request.client else None)
-    )
+    client_ip = _get_real_ip(request)
     try:
         job_id = manager.try_start(triggered_by_user_id=user_id, triggered_by_ip=client_ip)
     except RuntimeError as e:
@@ -85,6 +96,55 @@ def stop(_=Depends(auth_admin_access)):
         raise HTTPException(status_code=409, detail="No incorporation job is currently running")
     manager.request_cancel()
     return {"status": "cancel_requested"}
+
+
+# ---------------------------------------------------------------------------
+# Reset incorporation status — revert a session or range of sessions so the
+# next run reprocesses them. Pure status mutation; entity de-duplication is
+# handled idempotently by db_intake.py on the next incorporation.
+# ---------------------------------------------------------------------------
+
+@router.post("/reset-status")
+def reset_status(body: ResetStatusRequest, request: Request, permissions=Depends(auth_admin_access)):
+    if not body.dry_run:
+        if body.confirmation != RESET_CONFIRMATION_PHRASE:
+            raise HTTPException(
+                status_code=400,
+                detail=f'Confirmation required: type "{RESET_CONFIRMATION_PHRASE}" to apply the reset.',
+            )
+        # A reset that mutates status while the pipeline is mid-run would race its
+        # queue snapshots (Part B drains 'pending', Part C drains 'parsed').
+        # Previews (dry_run) are read-only and always allowed.
+        if manager.is_running():
+            raise HTTPException(
+                status_code=409,
+                detail="An incorporation job is currently running; wait for it to finish before resetting status.",
+            )
+
+    try:
+        affected = reset_incorporation_status(
+            target_status=body.target_status,
+            id_min=body.id_min,
+            id_max=body.id_max,
+            archiving_from=body.archiving_from,
+            archiving_to=body.archiving_to,
+            dry_run=body.dry_run,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if body.dry_run:
+        return {"count": affected}
+
+    user_id = getattr(permissions, "user_id", None)
+    client_ip = _get_real_ip(request)
+    logger.info(
+        "Reset incorporation_status to %s for %s session(s) by user=%s ip=%s "
+        "(id_min=%s id_max=%s archiving_from=%s archiving_to=%s)",
+        body.target_status, affected, user_id, client_ip,
+        body.id_min, body.id_max, body.archiving_from, body.archiving_to,
+    )
+    return {"updated": affected}
 
 
 # ---------------------------------------------------------------------------

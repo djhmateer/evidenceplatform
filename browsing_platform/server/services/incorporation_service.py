@@ -267,3 +267,100 @@ def cleanup_stale_jobs():
         return_type="none",
     )
     logger.info("Stale incorporation jobs marked as failed")
+
+
+# ---------------------------------------------------------------------------
+# Reset incorporation status (re-queue a session or range of sessions)
+# ---------------------------------------------------------------------------
+
+# Which current statuses may be reverted to a given target. Encodes the
+# revert-only rule: status topology is
+#   'pending' < ('parse_failed'|'parsed') < ('extract_failed'|'done')
+# and a reset may only lower a session's status, never raise or move it
+# laterally. Sessions at or below the target are silently skipped.
+#   - target 'pending'  : revert anything above 'pending'.
+#   - target 'parsed'   : revert only the top tier; NOT 'parse_failed' (lateral,
+#                         and it has no valid `structures` to extract from).
+_RESETTABLE_FROM = {
+    "pending": ("parse_failed", "parsed", "extract_failed", "done"),
+    "parsed": ("extract_failed", "done"),
+}
+
+# The pipeline only ever reprocesses these source types.
+_REPROCESSABLE_SOURCE_TYPES = ("local_har", "local_wacz")
+
+
+def reset_incorporation_status(
+    target_status: str,
+    id_min: Optional[int] = None,
+    id_max: Optional[int] = None,
+    archiving_from: Optional[str] = None,
+    archiving_to: Optional[str] = None,
+    dry_run: bool = True,
+) -> int:
+    """Revert the incorporation_status of in-range archive sessions to `target_status`.
+
+    Only sessions whose current status is strictly above the target (per the
+    revert-only rule in `_RESETTABLE_FROM`) and whose source_type is reprocessable
+    are affected; all others are silently skipped.
+
+    Range bounds (`id_min`/`id_max` on `id`, `archiving_from`/`archiving_to` on
+    `archiving_timestamp`) are each optional and combine with AND, so the range may
+    be open on either end or bounded on both.
+
+    When `dry_run` is True, returns the count of sessions that *would* change without
+    mutating. Otherwise performs the UPDATE (also clearing `extraction_error`, mirroring
+    the requeue/upload paths) and returns the number of rows changed.
+    """
+    allowed_from = _RESETTABLE_FROM.get(target_status)
+    if allowed_from is None:
+        raise ValueError(f"Unsupported reset target_status: {target_status!r}")
+
+    # mysql-connector does not expand a list into an IN clause, so build named
+    # placeholders explicitly (the convention used elsewhere in the loaders).
+    params: dict = {}
+    src_ph = []
+    for i, st in enumerate(_REPROCESSABLE_SOURCE_TYPES):
+        key = f"src{i}"
+        src_ph.append(f"%({key})s")
+        params[key] = st
+    from_ph = []
+    for i, st in enumerate(allowed_from):
+        key = f"from{i}"
+        from_ph.append(f"%({key})s")
+        params[key] = st
+
+    where = [
+        f"source_type IN ({', '.join(src_ph)})",
+        f"incorporation_status IN ({', '.join(from_ph)})",
+    ]
+    if id_min is not None:
+        where.append("id >= %(id_min)s")
+        params["id_min"] = id_min
+    if id_max is not None:
+        where.append("id <= %(id_max)s")
+        params["id_max"] = id_max
+    if archiving_from:
+        where.append("archiving_timestamp >= %(archiving_from)s")
+        params["archiving_from"] = archiving_from
+    if archiving_to:
+        where.append("archiving_timestamp <= %(archiving_to)s")
+        params["archiving_to"] = archiving_to
+
+    where_sql = " AND ".join(where)
+
+    if dry_run:
+        row = db.execute_query(
+            f"SELECT COUNT(*) AS n FROM archive_session WHERE {where_sql}",
+            params,
+            return_type="single_row",
+        )
+        return int(row["n"]) if row else 0
+
+    params["target"] = target_status
+    return db.execute_query(
+        f"UPDATE archive_session SET incorporation_status = %(target)s, extraction_error = NULL "
+        f"WHERE {where_sql}",
+        params,
+        return_type="rowcount",
+    )
