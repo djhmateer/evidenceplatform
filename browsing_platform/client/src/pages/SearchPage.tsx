@@ -200,18 +200,21 @@ export default function SearchPage() {
                         tagging={tagging}
                         largeIcons={largeIcons}
                     />
-                    {/* Pagination (stays in SearchPage, outside SearchPanel) */}
-                    <Stack direction="row" spacing={2} justifyContent="center" alignItems="center">
-                        <Button variant="text" disabled={query.page_number <= 1}
-                            onClick={() => encodeQueryToParams({...query, page_number: query.page_number - 1})}>
-                            Previous
-                        </Button>
-                        <Box>Page {query.page_number}</Box>
-                        <Button variant="text"
-                            onClick={() => encodeQueryToParams({...query, page_number: query.page_number + 1})}>
-                            Next
-                        </Button>
-                    </Stack>
+                    {/* Pagination (stays in SearchPage, outside SearchPanel).
+                        Image search returns a single unpaginated result set, so no pager there. */}
+                    {query.search_mode !== 'image' && (
+                        <Stack direction="row" spacing={2} justifyContent="center" alignItems="center">
+                            <Button variant="text" disabled={query.page_number <= 1}
+                                onClick={() => encodeQueryToParams({...query, page_number: query.page_number - 1})}>
+                                Previous
+                            </Button>
+                            <Box>Page {query.page_number}</Box>
+                            <Button variant="text"
+                                onClick={() => encodeQueryToParams({...query, page_number: query.page_number + 1})}>
+                                Next
+                            </Button>
+                        </Stack>
+                    )}
                 </Stack>
             </div>
         </div>

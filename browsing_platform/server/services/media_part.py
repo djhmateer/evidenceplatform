@@ -1,28 +1,9 @@
 import json
 from typing import Optional
 
-from pydantic import field_validator
-
 from browsing_platform.server.services.annotation import Annotation
-from extractors.entity_types import Media, EntityBase
+from extractors.entity_types import Media, MediaPart
 from utils import db
-
-
-class MediaPart(EntityBase):
-    media_id: int
-    timestamp_range_start: Optional[float] = None
-    timestamp_range_end: Optional[float] = None
-    crop_area: Optional[list[float]] = None
-
-    @field_validator('crop_area', mode='before')
-    def parse_data(cls, v, _):
-        if isinstance(v, str):
-            try:
-                v = json.loads(v)
-            except json.JSONDecodeError:
-                v = None
-        return v
-
 
 
 def get_media_part_by_id(media_part_id: int) -> Optional[MediaPart]:
@@ -57,7 +38,8 @@ def update_media_part(media_part: MediaPart) -> None:
            SET media_id = %(media_id)s,
                timestamp_range_start = %(timestamp_range_start)s,
                timestamp_range_end = %(timestamp_range_end)s,
-               crop_area = %(crop_area)s
+               crop_area = %(crop_area)s,
+               thumbnail_status = 'pending'
            WHERE id = %(id)s""",
         {
             "id": media_part.id,

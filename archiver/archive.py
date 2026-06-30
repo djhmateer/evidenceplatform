@@ -7,6 +7,7 @@ import os
 import shutil
 import socket
 import ssl
+import _ssl  # backing C-extension; exposes ENCODING_DER/PEM for Certificate.public_bytes
 import subprocess
 import sys
 import threading
@@ -98,6 +99,12 @@ class TLSCertInfo(BaseModel):
     issuer: Optional[dict] = None
     valid_from: Optional[str] = None
     valid_to: Optional[str] = None
+    # Full verified certificate chain (leaf-first) as PEM blocks, captured at
+    # sealing time. fingerprint_sha256 is the SHA-256 of chain_pem[0]'s DER.
+    # Persisting the raw certs (not just the fingerprint) lets anyone re-validate
+    # the chain and signatures entirely offline, years later, against the cert
+    # that was actually presented during sealing.
+    chain_pem: Optional[list[str]] = None
 
 
 class ArchiveSessionMetadata(BaseModel):
@@ -114,12 +121,37 @@ class ArchiveSessionMetadata(BaseModel):
     har_integrity: Optional[FileIntegrity] = None
     video_integrity: Optional[FileIntegrity] = None
     domain_resolutions: Optional[dict] = None
-    tls_cert: Optional[TLSCertInfo] = None
+    # host -> certificate presented by that host. Captured for every HTTPS domain
+    # contacted during the session (see domain_resolutions), not just the landing
+    # page — so the affidavit documents the cert chain of every server content was
+    # actually fetched from, and is platform-agnostic by construction.
+    tls_certs: Optional[dict[str, TLSCertInfo]] = None
     browser_build_id: Optional[str] = None
     commit_id: Optional[str] = None
     branch: Optional[str] = None
     signature: Optional[str] = None
     notes: Optional[str] = None
+
+
+def _verified_chain_pem(ssock: ssl.SSLSocket) -> list[str]:
+    """Return the full verified certificate chain (leaf-first) as PEM strings.
+
+    Uses the public ``get_verified_chain`` on Python 3.13+ and the private
+    ``_sslobj`` accessor on 3.12; if neither is available it falls back to the
+    leaf alone, so the leaf certificate is always persisted regardless."""
+    getter = getattr(ssock, "get_verified_chain", None)  # public API, 3.13+
+    if getter is None:
+        sslobj = getattr(ssock, "_sslobj", None)  # private accessor, 3.12
+        getter = getattr(sslobj, "get_verified_chain", None) if sslobj else None
+    if getter is not None:
+        try:
+            # public_bytes(ENCODING_PEM) returns str on some builds, bytes on others.
+            pems = [c.public_bytes(_ssl.ENCODING_PEM) for c in getter()]
+            return [p.decode("ascii") if isinstance(p, (bytes, bytearray)) else p for p in pems]
+        except Exception as e:
+            print(f"Verified-chain capture failed, storing leaf only: {e}")
+    der = ssock.getpeercert(binary_form=True)
+    return [ssl.DER_cert_to_PEM_cert(der)] if der else []
 
 
 def get_tls_cert_info(hostname: str) -> Optional[TLSCertInfo]:
@@ -135,12 +167,30 @@ def get_tls_cert_info(hostname: str) -> Optional[TLSCertInfo]:
                     issuer=dict(item for rdn in cert_dict.get('issuer', ()) for item in rdn),
                     valid_from=cert_dict.get('notBefore'),
                     valid_to=cert_dict.get('notAfter'),
+                    chain_pem=_verified_chain_pem(ssock),
                 )
-                print(f"TLS cert fingerprint for {hostname}: {info.fingerprint_sha256}")
+                print(f"TLS cert fingerprint for {hostname}: {info.fingerprint_sha256} "
+                      f"({len(info.chain_pem or [])} cert(s) in chain)")
                 return info
     except Exception as e:
         print(f"TLS certificate capture failed for {hostname}: {e}")
         return None
+
+
+def get_tls_certs_for_domains(domain_resolutions: Optional[dict]) -> dict:
+    """Capture the TLS certificate presented by each domain contacted during the
+    session — the hosts already enumerated in ``domain_resolutions``. This records
+    the certificate of every server content was actually fetched from rather than a
+    single user-supplied landing host (which may not even be among the contacted
+    domains), and works identically regardless of platform. Hosts that do not
+    complete a TLS handshake (non-HTTPS, unreachable, failed DNS) are omitted."""
+    certs: dict[str, TLSCertInfo] = {}
+    for hostname in sorted((domain_resolutions or {}).keys()):
+        cert = get_tls_cert_info(hostname)
+        if cert is not None:
+            certs[hostname] = cert
+    print(f"Captured TLS certificates for {len(certs)} domain(s).")
+    return certs
 
 
 def resolve_har_domains(har_path: Path) -> dict:
@@ -235,17 +285,29 @@ def screen_record(output_path, stop_event, frame_hashes_path=None):
 
 
 def affidavit_from_metadata(metadata: ArchiveSessionMetadata) -> str:
-    affidavit = f"""I, {metadata.signature}, have archived the Instagram content from {metadata.target_url} using the profile '{metadata.profile_name}'.
+    if metadata.tls_certs:
+        cert_lines = "\n".join(
+            f"  - {host}: SHA-256 fingerprint {c.fingerprint_sha256}, issued by {c.issuer}, "
+            f"valid from {c.valid_from} to {c.valid_to}."
+            for host, c in metadata.tls_certs.items()
+        )
+        tls_block = (
+            "At the time of sealing, the following domains presented these TLS certificates:\n"
+            + cert_lines
+        )
+    else:
+        tls_block = "No TLS certificate information was captured for the contacted domains."
+    affidavit = f"""I, {metadata.signature}, have archived the content from {metadata.target_url} using the profile '{metadata.profile_name}'.
 The archiving process started at {metadata.archiving_start_timestamp} and was completed at {metadata.archiving_finished_timestamp} (timezone: {datetime.datetime.now().astimezone().tzname()}, UTC {datetime.datetime.now().astimezone().utcoffset()}).
 Archiving was carried out from the IP address {metadata.my_ip}, and was done through the use of a custom Python script.
 The script launches a Playwright-controlled Firefox browser ({metadata.browser_build_id}), which is used to navigate to the target URL, and allows the user to manually interact with the page (including scrolling, clicking, and navigating to other pages).
-The script records the screen during this process, and also saves a HAR file of the network traffic. The screen recording is saved as a video file. Server requests for video content from the Instagram servers during the sessions are identified through analysis of the HAR file, and the full media files are downloaded and saved to the archive directory (these tracks may include data that does not appear in the HAR, since it only includes byte-range segments which don't necessarily cover the entire duration of the video).
+The script records the screen during this process, and also saves a HAR file of the network traffic. The screen recording is saved as a video file. Server requests for video content from the content servers during the sessions are identified through analysis of the HAR file, and the full media files are downloaded and saved to the archive directory (these tracks may include data that does not appear in the HAR, since it only includes byte-range segments which don't necessarily cover the entire duration of the video).
 None of the HAR's content has been altered or modified in any way, and no third party has been granted access to the file system. The code used for this process is available on GitHub at https://github.com/yanivcogan/InstagramArchiver (branch {metadata.branch}, commit {metadata.commit_id})
 SHA-256 hash of the HAR file: {metadata.har_integrity.whole_file_hash if metadata.har_integrity else 'N/A'}
 SHA-256 hash of the screen recording: {metadata.video_integrity.whole_file_hash if metadata.video_integrity else 'N/A'}
 Each archived asset has a sidecar `<asset>.manifest.json` carrying its chunked-SHA-256 + PAR2 recovery metadata, and a sibling `<asset>.par2` recovery file (PAR2). A single archive-level `manifests.json` summary at the archive root commits to every per-asset manifest's SHA-256 and is OpenTimestamps-anchored at `manifests.json.ots` — that one timestamp transitively proves the existence of every chunk hash, whole-file hash, and PAR2 index hash in the archive at the time of sealing.
 At the time of archiving, the following domains were contacted and resolved to the following IP addresses: {metadata.domain_resolutions}
-The TLS certificate presented by www.instagram.com had SHA-256 fingerprint {metadata.tls_cert.fingerprint_sha256 if metadata.tls_cert else 'N/A'}, issued by {metadata.tls_cert.issuer if metadata.tls_cert else 'N/A'}, valid from {metadata.tls_cert.valid_from if metadata.tls_cert else 'N/A'} to {metadata.tls_cert.valid_to if metadata.tls_cert else 'N/A'}.
+{tls_block}
 OS and hardware details: {metadata.platform}
 Additional Notes: {metadata.notes}"""
     return affidavit
@@ -381,6 +443,14 @@ def merge_har_attachments(har_path: Path) -> Path:
     attachment_count = 0
     missing_count = 0
     missing_by_mime: dict[str, int] = {}
+    # A second, distinct loss class: entries Playwright never even gave a `_file`
+    # ref to, yet bytes crossed the wire (_transferSize > 0). The content recorder
+    # silently dropped the body — overwhelmingly large media (<video> progressive
+    # downloads) whose bytes are consumed by the browser's media pipeline. Tally
+    # these too; otherwise media-body loss is invisible (no missing-attachment
+    # warning fires) and only surfaces much later as un-reassemblable videos.
+    dropped_count = 0
+    dropped_by_mime: dict[str, int] = {}
     with open(har_path, 'rb') as har_f, \
          open(temp_path, 'w', encoding='utf-8') as out_f:
 
@@ -429,6 +499,23 @@ def merge_har_attachments(har_path: Path) -> Path:
                     missing_count += 1
                     mime_key = content.get('mimeType', '?').split(';')[0]
                     missing_by_mime[mime_key] = missing_by_mime.get(mime_key, 0) + 1
+            else:
+                # No `_file` ref at all. If bytes were transferred for a 200/206
+                # but no body was inlined, the recorder dropped it (the
+                # media-pipeline loss class — content.size is left at -1).
+                response = entry.get('response', {})
+                transfer = response.get('_transferSize') or 0
+                if (
+                    transfer > 0
+                    and response.get('status') in (200, 206)
+                    and 'text' not in content
+                    # size < 0 is Playwright's "body not captured" marker; a
+                    # legitimately empty body records size 0, which we must not flag.
+                    and content.get('size', -1) < 0
+                ):
+                    dropped_count += 1
+                    mime_key = content.get('mimeType', '?').split(';')[0]
+                    dropped_by_mime[mime_key] = dropped_by_mime.get(mime_key, 0) + 1
 
             if not first:
                 out_f.write(',')
@@ -440,18 +527,34 @@ def merge_har_attachments(har_path: Path) -> Path:
     # Move the merged HAR to the archive root and delete the whole workspace.
     if missing_count:
         pct_lost = missing_count * 100 // max(attachment_count, 1)
-        print(f"⚠️  Merging HAR: {attachment_count} attachments referenced, "
+        print(f"WARNING: Merging HAR: {attachment_count} attachments referenced, "
               f"{missing_count} MISSING ({pct_lost}% of bodies lost).")
         print("    Missing by MIME type (top contributors):")
         for mime, n in sorted(missing_by_mime.items(), key=lambda kv: -kv[1])[:8]:
             print(f"      {n:>5}  {mime}")
         print("    This means Playwright finalized the HAR with `_file` "
-              "references whose attachment files were never written — "
+              "references whose attachment files were never written -- "
               "typically because context.close() ran while requests were "
               "still in flight (X-button close is the usual culprit).")
     else:
         print(f"Merging HAR attachments into self-contained HAR ({attachment_count} attachments)...")
-    temp_path.rename(final_path)
+
+    if dropped_count:
+        print(f"WARNING: HAR body capture: {dropped_count} response(s) transferred over "
+              f"the network but had NO body recorded (Playwright never wrote a "
+              f"`_file` for them).")
+        print("    Dropped by MIME type (top contributors):")
+        for mime, n in sorted(dropped_by_mime.items(), key=lambda kv: -kv[1])[:8]:
+            print(f"      {n:>5}  {mime}")
+        print("    This is the media-pipeline loss class: bodies consumed by the "
+              "browser's <video>/<audio> decoder never reach record_har_content "
+              "(a Playwright limitation, not a merge fault). Such media must be "
+              "re-acquired from the CDN (full_asset) during extraction.")
+    # os.replace (not Path.rename): atomic overwrite on both platforms. On
+    # Windows Path.rename raises FileExistsError when final_path already exists
+    # (e.g. a re-merge / resumed session), which would abort the merge and strand
+    # the bodies in the workspace.
+    os.replace(str(temp_path), str(final_path))
     shutil.rmtree(workspace_dir)
     print("HAR merge complete.")
     return final_path
@@ -626,8 +729,11 @@ def finish_recording(recording_thread: Optional[threading.Thread], archive_dir: 
             traceback.print_exc()
             print(f"❌ HAR merge failed, proceeding with unmerged HAR: {e}")
 
-        # Resolve all domains contacted during the session
+        # Resolve all domains contacted during the session, then capture the TLS
+        # certificate each of them presented (platform-agnostic; covers every server
+        # content was fetched from, not just the landing page).
         metadata.domain_resolutions = resolve_har_domains(metadata.har_archive)
+        metadata.tls_certs = get_tls_certs_for_domains(metadata.domain_resolutions)
 
         metadata.archiving_finished_timestamp = datetime.datetime.now().isoformat()
 
@@ -704,7 +810,7 @@ def finish_recording(recording_thread: Optional[threading.Thread], archive_dir: 
     return
 
 
-def archive_instagram_content(profile: Profile, target_url: str):
+def archive_content(profile: Profile, target_url: str):
     profiles_dir = Path(ROOT_DIR) / "archiver" / "profiles"
     profile_name = profile.name
     profile_path = profiles_dir / profile_name
@@ -719,7 +825,6 @@ def archive_instagram_content(profile: Profile, target_url: str):
     archive_dir = Path(ROOT_DIR) / "archives" / f"{profile_name}_{archiving_start_time.strftime('%Y%m%d_%H%M%S')}"
     archive_dir.mkdir(parents=True, exist_ok=True)
     my_public_ip = get_my_public_ip()
-    tls_cert = get_tls_cert_info("www.instagram.com")
 
     with open(profile_path / "state.json", "r") as f:
         storage_state = json.load(f)
@@ -738,7 +843,8 @@ def archive_instagram_content(profile: Profile, target_url: str):
         har_archive=archive_dir / "har_workspace" / "archive.har",
         my_ip=my_public_ip,
         platform=get_system_info(),
-        tls_cert=tls_cert,
+        # tls_certs is populated post-session in finish_recording, once the set of
+        # contacted domains is known from the HAR.
     )
 
     try:
@@ -847,8 +953,13 @@ if __name__ == "__main__":
     ensure_ffmpeg_installed()
     ensure_par2_installed()
     selected_profile = select_profile()
-    url = input("Enter the Instagram URL to archive: ")
-    url = url.split("?igsh=")[0].strip().split("&igsh=")[0].strip()
+    url = input("Enter the URL to archive: ")
+    # Strip Meta share-sheet tracking params: Instagram's ?igsh=/&igsh= and
+    # Threads' ?xmt=/&xmt= equivalent.
+    url = url.strip()
+    for _sep in ("?igsh=", "&igsh=", "?xmt=", "&xmt="):
+        url = url.split(_sep)[0]
+    url = url.strip()
 
-    archive_instagram_content(selected_profile, url)
+    archive_content(selected_profile, url)
     sys.exit(0)

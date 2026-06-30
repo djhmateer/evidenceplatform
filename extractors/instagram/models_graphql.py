@@ -2,7 +2,7 @@ from typing import Optional, List, Any
 
 from pydantic import ConfigDict, BaseModel, Field
 
-from extractors.models import InstagramPost, HighlightsReel, StoryUser, HighlightsReelPageInfo, VideoVersion, \
+from extractors.instagram.models import InstagramPost, HighlightsReel, StoryUser, HighlightsReelPageInfo, VideoVersion, \
     InstagramImageVersions2, InstagramCarouselMedia, HighlightsReelUser
 
 

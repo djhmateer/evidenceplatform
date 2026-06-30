@@ -3,14 +3,16 @@ from typing import List, Optional
 
 from pydantic import BaseModel
 
-from browsing_platform.server.services.tag import ENTITY_TAG_TABLES
+from browsing_platform.server.services.tag import ENTITY_TAG_TABLES, normalize_entity_for_affinity
 from utils import db
 
 
 def validate_tags_entity_affinity(tag_ids: list[int], entity_type: str) -> list[int]:
-    """Returns IDs of tags whose type has entity_affinity set that excludes entity_type."""
+    """Returns IDs of tags whose type has entity_affinity set that excludes entity_type
+    (a media_part is validated against the 'media' affinity — see normalize_entity_for_affinity)."""
     if not tag_ids:
         return []
+    entity_type = normalize_entity_for_affinity(entity_type)
     in_clause = ', '.join([f"%(id_{i})s" for i in range(len(tag_ids))])
     args: dict = {f"id_{i}": tag_id for i, tag_id in enumerate(tag_ids)}
     args["entity_json"] = json.dumps(entity_type)

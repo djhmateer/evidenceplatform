@@ -6,7 +6,8 @@ import SelfContainedPopover from "../SelfContainedComponents/selfContainedPopove
 import ReactJson from "react-json-view";
 import MoreHorizIcon from "@mui/icons-material/MoreHoriz";
 import LinkIcon from "@mui/icons-material/Link";
-import {fetchMediaData, fetchMediaParts} from "../../services/DataFetcher";
+import AddIcon from "@mui/icons-material/Add";
+import {fetchMediaData} from "../../services/DataFetcher";
 import {anchor_local_static_files} from "../../services/server";
 import MediaPart from "./MediaPart";
 import {EntityViewerConfig} from "./EntitiesViewerConfig";
@@ -36,12 +37,6 @@ export default function Media({media: mediaProp, viewerConfig}: IProps) {
         setAwaitingDetailsFetch(false);
     };
 
-    const refetchMediaParts = async () => {
-        const itemId = media.id;
-        if (itemId === undefined || itemId === null) return;
-        const media_parts = await fetchMediaParts(itemId);
-        setMedia(curr => ({...curr, media_parts}));
-    };
 
     const navigate = useNavigate();
     const location = useLocation();
@@ -415,14 +410,22 @@ export default function Media({media: mediaProp, viewerConfig}: IProps) {
         }
         {
             viewerConfig?.mediaPart.display === "display" ? <Stack direction={"column"} gap={1}>
-                <Typography>Segments</Typography>
+                <Typography variant={"subtitle1"}>Segments</Typography>
                 {
                     (media.media_parts || []).map(
                         (mediaPart, index: number) => <MediaPart
                             mediaPart={mediaPart}
                             media={media}
-                            key={index}
-                            refetchMediaParts={refetchMediaParts}
+                            index={index}
+                            viewerConfig={viewerConfig}
+                            key={mediaPart.id ?? `new-${index}`}
+                            onSaved={(saved) => {
+                                setMedia(curr => {
+                                    const parts = [...(curr.media_parts || [])];
+                                    parts[index] = saved;
+                                    return {...curr, media_parts: parts};
+                                });
+                            }}
                             onDelete={() => {
                                 try {
                                     const parts = [...(media.media_parts || [])];
@@ -433,22 +436,21 @@ export default function Media({media: mediaProp, viewerConfig}: IProps) {
                         />
                     )
                 }
-                <Button
-                    variant={"contained"} color={"primary"}
+                {viewerConfig?.mediaPart?.annotator !== "disable" && <Button
+                    variant={"outlined"} color={"primary"} startIcon={<AddIcon/>}
                     onClick={() => {
+                        // New segments start unsaved in edit mode; the Save button persists them
+                        // (and reveals the per-part tag assigner once they get an id).
                         const newPart = {
-                            id: undefined,
                             media_id: media.id,
                             crop_area: [0, 100, 0, 100],
                             timestamp_range_start: 0,
-                            timestamp_range_end: undefined,
-                            notes: "",
                         };
                         setMedia(curr => ({...curr, media_parts: [...(curr.media_parts || []), newPart]}));
                     }}
                 >
-                    New Part
-                </Button>
+                    New segment
+                </Button>}
             </Stack> : null
         }
     </div>

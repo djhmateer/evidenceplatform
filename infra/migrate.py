@@ -120,15 +120,25 @@ def _parse_filename(path: Path) -> tuple[int, str] | None:
         return None
 
 
-def _apply_sql(cnx, path: Path):
-    sql = path.read_text(encoding="utf-8")
-    # Strip -- line comments before splitting so semicolons inside comments
-    # don't produce invalid statement fragments.
-    stripped_lines = []
+def _strip_line_comments(sql: str) -> str:
+    """Strip ``--`` line comments before the statement splitter runs, so a
+    semicolon inside a comment can't terminate a statement early. A full line
+    whose first non-whitespace characters are ``--`` is dropped entirely; an
+    inline ``--`` (preceded by whitespace, matching MySQL's rule that ``--``
+    only begins a comment when followed by whitespace/control) truncates the
+    rest of its line. ``comment '...'`` clauses and ``--`` inside
+    identifiers/values are left untouched."""
+    out = []
     for line in sql.splitlines():
-        idx = line.find("--")
-        stripped_lines.append(line[:idx] if idx >= 0 else line)
-    sql = "\n".join(stripped_lines)
+        if line.lstrip().startswith("--"):
+            continue  # full-line comment
+        idx = line.find(" --")
+        out.append(line[:idx] if idx >= 0 else line)
+    return "\n".join(out)
+
+
+def _apply_sql(cnx, path: Path):
+    sql = _strip_line_comments(path.read_text(encoding="utf-8"))
     cur = cnx.cursor()
     try:
         for stmt in sql.split(";"):

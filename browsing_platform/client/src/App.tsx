@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react';
+import React, {lazy, Suspense, useEffect, useState} from 'react';
 import 'material-react-toastify/dist/ReactToastify.css';
 import './lib/variables.scss'
 import './lib/global.scss'
@@ -7,28 +7,34 @@ import './lib/layout.scss'
 import {BrowserRouter as Router, Route, Routes} from "react-router";
 import PubSub from 'pubsub-js';
 import events from './lib/events';
-import NoMatch from "./pages/404";
-import Login from "./pages/Login";
-
 import {LocalizationProvider} from '@mui/x-date-pickers/LocalizationProvider';
 import {AdapterDayjs} from '@mui/x-date-pickers/AdapterDayjs';
 import {KeyStatesProvider} from './services/keys/keyStates';
 import {ToastContainer} from "material-react-toastify";
 import {incorporateArrayInQueue, IPopupAlert, IPreparedPopupAlert} from "./services/alerts/alerts";
 import AlertQueueModal from "./services/alerts/AlertQueueModal";
-import AccountPage from "./pages/AccountPage";
-import PostPage from "./pages/PostPage";
-import MediaPage from "./pages/MediaPage";
-import SessionPage from "./pages/SessionPage";
-import SearchPage from "./pages/SearchPage";
-import UploadPage from "./pages/Upload";
-import IncorporatePage from "./pages/Incorporate";
-import TagManagementPage from "./pages/TagManagementPage";
-import EditTagPage from "./pages/EditTagPage";
-import SecuritySettings from "./pages/SecuritySettings";
-import AdminUsersPage from "./pages/AdminUsersPage";
-import CommunityDetectionPage from "./pages/CommunityDetectionPage";
+
+// Login is the landing route — keep it eager so first paint isn't gated on a
+// second network round-trip. SharePasswordGate wraps most routes and is tiny.
+import Login from "./pages/Login";
 import SharePasswordGate from "./UIComponents/LinkSharing/SharePasswordGate";
+
+// Everything below is code-split: each page (and the heavy libs it pulls in —
+// x-data-grid, query-builder, react-json-view, zxcvbn) loads on navigation
+// rather than being baked into the initial bundle.
+const NoMatch = lazy(() => import("./pages/404"));
+const AccountPage = lazy(() => import("./pages/AccountPage"));
+const PostPage = lazy(() => import("./pages/PostPage"));
+const MediaPage = lazy(() => import("./pages/MediaPage"));
+const SessionPage = lazy(() => import("./pages/SessionPage"));
+const SearchPage = lazy(() => import("./pages/SearchPage"));
+const UploadPage = lazy(() => import("./pages/Upload"));
+const IncorporatePage = lazy(() => import("./pages/Incorporate"));
+const TagManagementPage = lazy(() => import("./pages/TagManagementPage"));
+const EditTagPage = lazy(() => import("./pages/EditTagPage"));
+const SecuritySettings = lazy(() => import("./pages/SecuritySettings"));
+const AdminUsersPage = lazy(() => import("./pages/AdminUsersPage"));
+const CommunityDetectionPage = lazy(() => import("./pages/CommunityDetectionPage"));
 
 export default function App() {
     const [alertQueue, setAlertQueue] = useState<IPreparedPopupAlert[]>([]);
@@ -66,6 +72,7 @@ export default function App() {
         <KeyStatesProvider>
             <Router>
                 <meta/>
+                <Suspense fallback={<div style={{padding: 24}}>Loading…</div>}>
                 <Routes>
                     <Route path="/" element={<Login/>}/>
                     <Route path="/login" element={<Login/>}/>
@@ -88,6 +95,7 @@ export default function App() {
                     <Route path="/admin/users" element={<AdminUsersPage/>}/>
                     <Route path="/*" element={<NoMatch/>}/>
                 </Routes>
+                </Suspense>
                 <ToastContainer
                     position="bottom-left"
                     bodyStyle={{color: '#000'}}

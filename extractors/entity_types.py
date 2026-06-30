@@ -11,9 +11,12 @@ from browsing_platform.server.services.tag import ITagWithType
 
 _PLATFORM_PAGE_PREFIXES = {
     'instagram': 'https://www.instagram.com/',
+    'threads': 'https://www.threads.com/',
 }
 _PLATFORM_CDN_PREFIXES = {
     'instagram': 'https://scontent.cdninstagram.com/v/',
+    # Threads serves media from the same shared Meta CDN as Instagram.
+    'threads': 'https://scontent.cdninstagram.com/v/',
 }
 
 t_platform = Literal['instagram', 'facebook', 'telegram', 'youtube', 'twitter', 'threads']
@@ -54,6 +57,16 @@ def _instagram_cdn_suffix(raw: str) -> Optional[str]:
     return raw if raw else None
 
 
+def _threads_page_suffix(raw: str) -> Optional[str]:
+    """Normalise a captured Threads page path (e.g. '@user' or '@user/post/CODE')
+    to a stored suffix: strip query string, fragment, and trailing slash."""
+    raw = raw.lstrip('/')
+    if not raw:
+        return None
+    raw = raw.split('?')[0].split('#')[0].rstrip('/')
+    return raw if raw else None
+
+
 _URL_PARSE_RULES: list[tuple[re.Pattern, str, Any]] = [
     # Instagram page URLs: https://www.instagram.com/{path} (or without scheme/www)
     (
@@ -61,7 +74,15 @@ _URL_PARSE_RULES: list[tuple[re.Pattern, str, Any]] = [
         'instagram',
         _instagram_page_suffix,
     ),
+    # Threads page URLs: https://www.threads.com/@{user}[/post/{code}] (also threads.net)
+    (
+        re.compile(r'(?:https?://)?(?:www\.)?threads\.(?:com|net)/(.+)', re.I | re.S),
+        'threads',
+        _threads_page_suffix,
+    ),
     # Instagram CDN media URLs: https://scontent*.cdninstagram.com/v/{filename}
+    # (shared with Threads; media platform is assigned by the referencing structure,
+    # not by this rule, so there is no separate Threads CDN rule.)
     (
         re.compile(r'(?:https?://)?scontent[^/]*\.cdninstagram\.com/v/([^?]+)', re.I),
         'instagram',
@@ -85,7 +106,7 @@ def parse_search_url(s: str) -> Optional[ParsedSearchUrl]:
     s = s.strip()
     # Quick gate: must look like a URL before we try expensive regexes
     if '://' not in s and not s.lower().startswith('www.') and not any(
-        kw in s.lower() for kw in ('instagram.com', 'cdninstagram.com')
+        kw in s.lower() for kw in ('instagram.com', 'cdninstagram.com', 'threads.com', 'threads.net')
     ):
         return None
     for pattern, platform, post_process in _URL_PARSE_RULES:
@@ -277,6 +298,24 @@ class Media(EntityBase):
 
     @field_validator('data', mode='before')
     def parse_data(cls, v, _):
+        if isinstance(v, str):
+            try:
+                v = json.loads(v)
+            except json.JSONDecodeError:
+                v = None
+        return v
+
+
+class MediaPart(EntityBase):
+    media_id: int
+    timestamp_range_start: Optional[float] = None
+    timestamp_range_end: Optional[float] = None
+    crop_area: Optional[list[float]] = None
+    thumbnail_path: Optional[str] = None
+    thumbnail_status: Literal['pending', 'generated', 'not_needed', 'error'] = "pending"
+
+    @field_validator('crop_area', mode='before')
+    def parse_crop_area(cls, v, _):
         if isinstance(v, str):
             try:
                 v = json.loads(v)
@@ -544,6 +583,7 @@ class ExtractedEntitiesFlattened(BaseModel):
 
 class MediaAndAssociatedEntities(Media):
     media_parent_post: Optional['PostAndAssociatedEntities'] = None
+    media_parts: list[MediaPart] = Field(default_factory=list)
 
 class PostAndAssociatedEntities(Post):
     post_author: Optional['AccountAndAssociatedEntities'] = None

@@ -7,9 +7,9 @@ import json
 from bs4 import BeautifulSoup
 from typing import List, Optional
 
-from extractors.models import HighlightsReelConnection, CommentsConnection, \
+from extractors.instagram.models import HighlightsReelConnection, CommentsConnection, \
     ProfileTimeline, MediaShortcode, StoriesFeed
-from extractors.models_graphql import ReelsMediaConnection
+from extractors.instagram.models_graphql import ReelsMediaConnection
 from extractors.models_har import HarRequest
 
 

@@ -54,6 +54,8 @@ export interface IMediaPart extends IEntityBase {
     timestamp_range_start?: number;
     timestamp_range_end?: number;
     crop_area?: number[];
+    thumbnail_path?: string;
+    thumbnail_status?: 'pending' | 'generated' | 'not_needed' | 'error';
 }
 
 export interface IComment extends IEntityBase {

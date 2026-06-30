@@ -1,6 +1,7 @@
 import React, {useEffect, useMemo} from 'react';
-import {useParams} from "react-router";
+import {useParams, useSearchParams} from "react-router";
 import {Typography,} from "@mui/material";
+import MediaPartFocusModal from "../UIComponents/Entities/MediaPartFocusModal";
 import {fetchArchivingSessionsMedia, fetchMedia} from "../services/DataFetcher";
 import EntitiesViewer from "../UIComponents/Entities/EntitiesViewer";
 import ArchivingSessionsList from "../UIComponents/Entities/ArchivingSessionsList";
@@ -69,7 +70,8 @@ export default function MediaPage() {
                             annotator: disableAnnotator ? "disable" : "show",
                         },
                         mediaPart: {
-                            display: "display"
+                            display: "display",
+                            annotator: disableAnnotator ? "disable" : "show"
                         }
                     })
                 }
@@ -80,6 +82,23 @@ export default function MediaPage() {
     const primaryMedia = data?.accounts?.[0]?.account_posts?.[0]?.post_media?.[0];
     const stableSharePath = primaryMedia?.id_on_platform ? `/media/pk/${primaryMedia.id_on_platform}` : undefined;
     const isLoggedIn = !!(cookie.get("token"));
+
+    // ?part_id=… brings a single segment into focus once the enriched media (with its nested parts)
+    // has loaded.
+    const [searchParams, setSearchParams] = useSearchParams();
+    const focusPartId = searchParams.get("part_id");
+    const focusedPart = useMemo(
+        () => focusPartId
+            ? (primaryMedia?.media_parts || []).find(p => String(p.id) === focusPartId)
+            : undefined,
+        [focusPartId, primaryMedia],
+    );
+    const clearFocusPart = () => {
+        const next = new URLSearchParams(searchParams);
+        next.delete("part_id");
+        setSearchParams(next, {replace: true});
+    };
+
     return (
         <PageShell
             hideMenu={hideHeader}
@@ -88,6 +107,9 @@ export default function MediaPage() {
             headerRight={isLoggedIn && dbId ? <LinkSharing entityType={"media"} entityId={dbId} stableSharePath={stableSharePath}/> : undefined}
         >
             {renderData()}
+            {primaryMedia && focusedPart && (
+                <MediaPartFocusModal open onClose={clearFocusPart} media={primaryMedia} part={focusedPart}/>
+            )}
             {!fetchError && <ArchivingSessionsList sessions={sessions} loadingSessions={loadingSessions}/>}
         </PageShell>
     );

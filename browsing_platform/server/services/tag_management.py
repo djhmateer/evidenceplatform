@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from browsing_platform.server.services.tag import ITagWithType
+from browsing_platform.server.services.tag import ITagWithType, normalize_entity_for_affinity
 from utils import db
 
 
@@ -195,7 +195,7 @@ def list_quick_access_data(entity: Optional[str] = None) -> IQuickAccessData:
     args: dict = {}
     if entity is not None:
         affinity_clause = " AND (tag_type.entity_affinity IS NULL OR JSON_CONTAINS(tag_type.entity_affinity, %(entity_json)s))"
-        args["entity_json"] = json.dumps(entity)
+        args["entity_json"] = json.dumps(normalize_entity_for_affinity(entity))
 
     individual_rows = db.execute_query(
         f"SELECT {_QUICK_ACCESS_TAG_COLS} FROM tag LEFT JOIN tag_type ON tag.tag_type_id = tag_type.id WHERE tag.quick_access = 1{affinity_clause} ORDER BY tag.name",

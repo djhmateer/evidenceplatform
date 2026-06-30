@@ -14,9 +14,10 @@ from pydantic import BaseModel
 from archiver.summarizers import download_log as dl
 from extractors.structures_extraction import StructureType
 from extractors.structures_extraction import structures_from_har
-from extractors.structures_extraction_api_v1 import ApiV1Response
-from extractors.structures_extraction_graphql import GraphQLResponse
-from extractors.structures_extraction_html import PageResponse
+from extractors.instagram.structures_extraction_api_v1 import ApiV1Response
+from extractors.instagram.structures_extraction_graphql import GraphQLResponse
+from extractors.instagram.structures_extraction_html import PageResponse
+from extractors.threads.structures_extraction import ThreadsResponse
 from utils.integrity import FileIntegrity, protect_file, prune_orphan_sidecars
 
 OnLoggedMissingPhoto = Literal["use_har_bytes_only", "skip", "redownload"]
@@ -238,6 +239,15 @@ def extract_photos_from_structures(structures: list[StructureType]) -> list[Phot
                             for c in item.carousel_media:
                                 if c.image_versions2 and c.image_versions2.candidates:
                                     register(c.pk, c.image_versions2.candidates[0].url)
+
+            elif isinstance(s, ThreadsResponse):
+                for post in s.posts:
+                    if post.image_versions2 and post.image_versions2.candidates:
+                        register(post.pk, post.image_versions2.candidates[0].url)
+                    if post.carousel_media:
+                        for c in post.carousel_media:
+                            if c.image_versions2 and c.image_versions2.candidates:
+                                register(c.pk, c.image_versions2.candidates[0].url)
         except Exception:
             continue
     return list(photos.values())

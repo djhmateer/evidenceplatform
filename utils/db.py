@@ -108,7 +108,7 @@ def batch_insert(table: str, columns: list, rows: list) -> list:
         cursor.close()
 
 
-def execute_query(query, args, return_type: Literal["single_row", "rows", "id", "none", "debug"] = "rows", timeout_ms: int | None = None):
+def execute_query(query, args, return_type: Literal["single_row", "rows", "id", "none", "rowcount", "debug"] = "rows", timeout_ms: int | None = None):
     if getattr(_local, "connection", None) is not None:
         # Reuse the open transaction connection on this thread.
         return _execute_query_on_connection(_local.connection, query, args, return_type, commit=False, timeout_ms=timeout_ms)
@@ -142,6 +142,8 @@ def _execute_query_on_connection(cnx, query, args, return_type, commit=True, tim
             return last_row_id
         if return_type == "none":
             return True
+        if return_type == "rowcount":
+            return cursor.rowcount
         return None
     except mysql.connector.Error as err:
         if err.errno == 3024:

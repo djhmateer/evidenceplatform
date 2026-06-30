@@ -46,8 +46,8 @@ from warcio.archiveiterator import ArchiveIterator
 import root_anchor
 from db_loaders.db_intake import LOCAL_ARCHIVES_DIR_ALIAS, LOCAL_WACZ_ARCHIVES_DIR_ALIAS
 from extractors.structures_extraction import structures_from_har
-from extractors.structures_extraction_graphql import extract_graphql_from_response, is_graphql_url
-from extractors.structures_extraction_html import extract_data_from_html_entry
+from extractors.instagram.structures_extraction_graphql import extract_graphql_from_response, is_graphql_url
+from extractors.instagram.structures_extraction_html import extract_data_from_html_entry
 from extractors.structures_from_wacz import _decode_response_body, _make_minimal_har_request
 from extractors.structures_to_entities import convert_structure_to_entities
 
